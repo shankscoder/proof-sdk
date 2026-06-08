@@ -240,7 +240,6 @@ function renderSidebar(view: DashboardView, currentFolderId: string | null): str
       <a class="nav-link${trashActive ? ' active' : ''}" href="/trash"${trashActive ? ' aria-current="page"' : ''}>Trash${view.trashCount > 0 ? ` (${view.trashCount})` : ''}</a>
       <div class="nav-section-label">Help</div>
       <a class="nav-link" href="/agent-help">Agent Help</a>
-      <a class="nav-link" href="/settings">Settings</a>
     </nav>
   </aside>`;
 }
@@ -1148,14 +1147,13 @@ function renderAgentHelpHtml(req: Request): string {
 </html>`;
 }
 
-function renderSettingsHtml(settings: LocalEditorSettings, query: Request['query'] = {}): string {
+function renderSettingsHtml(_settings: LocalEditorSettings, query: Request['query'] = {}): string {
   const notice = typeof query.notice === 'string'
     ? `<p class="notice">${escapeHtml(query.notice)}</p>`
     : '';
   const error = typeof query.error === 'string'
     ? `<p class="notice error">${escapeHtml(query.error)}</p>`
     : '';
-  const checked = settings.suggestionsDefaultEnabled ? ' checked' : '';
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -1371,7 +1369,6 @@ function renderSettingsHtml(settings: LocalEditorSettings, query: Request['query
         <nav aria-label="Settings navigation">
           <div class="nav-section-label">Workspace</div>
           <a class="nav-link" href="/">Home</a>
-          <a class="nav-link active" href="/settings" aria-current="page">Settings</a>
           <div class="nav-section-label">Help</div>
           <a class="nav-link" href="/agent-help">Agent Help</a>
         </nav>
@@ -1379,24 +1376,13 @@ function renderSettingsHtml(settings: LocalEditorSettings, query: Request['query
       <main class="content">
         <nav class="breadcrumbs"><a href="/">Home</a><span>/</span><span>Settings</span></nav>
         <h1>Settings</h1>
-        <p class="subtitle">Local defaults for new browser sessions.</p>
+        <p class="subtitle">Local editor settings are temporarily unavailable.</p>
         ${notice}
         ${error}
-        <form class="settings-card" method="post" action="/settings">
-          <div class="setting-row">
-            <div>
-              <p class="setting-title">Start new sessions in Suggesting mode</p>
-              <p class="setting-copy">When enabled, newly opened editor sessions turn direct typing into reviewable suggestions by default. Existing open tabs keep their current mode until reloaded.</p>
-            </div>
-            <label class="switch" aria-label="Start new sessions in Suggesting mode">
-              <input type="checkbox" name="suggestionsDefaultEnabled" value="1"${checked} />
-              <span class="switch-track" aria-hidden="true"></span>
-            </label>
-          </div>
-          <div class="actions">
-            <button type="submit">Save settings</button>
-          </div>
-        </form>
+        <section class="settings-card">
+          <p class="setting-title">Nothing to configure right now</p>
+          <p class="setting-copy">Suggestions mode is hidden while the editing flow is stabilized. The rest of the local dashboard and editor can be used normally.</p>
+        </section>
       </main>
     </div>
   </body>
@@ -1458,9 +1444,9 @@ dashboardRoutes.get('/settings', (req, res) => {
 dashboardRoutes.post('/settings', (req, res) => {
   try {
     updateLocalEditorSettings({
-      suggestionsDefaultEnabled: getBodyString(req, 'suggestionsDefaultEnabled') === '1',
+      suggestionsDefaultEnabled: false,
     });
-    res.redirect(303, '/settings?notice=Settings%20saved');
+    res.redirect(303, '/settings?notice=Suggestions%20mode%20is%20disabled');
   } catch (error) {
     res.redirect(303, `/settings?error=${encodeURIComponent(error instanceof Error ? error.message : 'Settings could not be saved')}`);
   }

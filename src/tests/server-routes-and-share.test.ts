@@ -512,49 +512,37 @@ async function runServerSourceTests(): Promise<void> {
     );
   });
 
-  await test('D1: editor reads dashboard default Suggestions mode config', async () => {
+  await test('D1: editor keeps Suggestions default mode dormant', async () => {
     assertIncludes(
       editorSource,
-      'suggestionsDefaultEnabled',
-      'editor should read the local default Suggestions mode setting',
+      'Suggestions are temporarily hidden from the local app',
+      'editor should keep default Suggestions mode dormant',
     );
-    assertIncludes(
+    const applyDefaultBlock = sliceBetween(
       editorSource,
-      'applyDefaultSuggestionsMode',
-      'editor should apply the default Suggestions mode during startup',
+      '  private applyDefaultSuggestionsMode(): void {',
+      '\n  private posToLineCol',
     );
+    assert(!applyDefaultBlock.includes('enableSuggestions(view)'), 'default startup should not enable Suggestions mode');
   });
 
-  await test('D1: editor share toolbar exposes Suggesting toggle', async () => {
-    assertIncludes(
+  await test('D1: editor share toolbar hides Suggesting toggle', async () => {
+    const bannerRenderBlock = sliceBetween(
       editorSource,
-      'share-pill-suggesting-control',
-      'share toolbar should include a visible Suggesting control',
+      '  private renderShareBannerContent(',
+      '\n  private uninstallShareAgentPresenceObservers',
+    );
+    assert(!bannerRenderBlock.includes('createSuggestionsModeControl'), 'share toolbar should not render the Suggesting control');
+    assert(!bannerRenderBlock.includes('suggestionsControl'), 'share toolbar should not append a Suggesting control');
+    const publicToggleBlock = sliceBetween(
+      editorSource,
+      '  toggleSuggestions(): boolean {',
+      '\n  /**\n   * Check if suggestions are enabled',
     );
     assertIncludes(
-      editorSource,
-      "label.textContent = 'Suggesting';",
-      'share toolbar should label the Suggesting control',
-    );
-    assertIncludes(
-      editorSource,
-      "enabled ? 'Turn Suggesting mode off' : 'Turn Suggesting mode on'",
-      'Suggesting toggle should expose accessible on/off labels',
-    );
-    assertIncludes(
-      editorSource,
-      'this.toggleSuggestions();',
-      'Suggesting control should toggle the existing suggestion mode',
-    );
-    assertIncludes(
-      editorSource,
-      'focusEditorAfterSuggestionsToggle',
-      'Suggesting control should return keyboard focus to the editor after toggling',
-    );
-    assertIncludes(
-      editorSource,
-      "toggle.addEventListener('pointerdown', keepEditorFocus);",
-      'Suggesting control should avoid stealing focus on pointer interaction',
+      publicToggleBlock,
+      'Suggestions are temporarily disabled',
+      'public Suggestions toggle should be inert while the feature is hidden',
     );
   });
 
@@ -836,6 +824,7 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       assertIncludes(response.body, 'class="tree-link active" href="/" style="--depth: 0;" aria-current="page"', 'Expected active Home tree link');
       assertIncludes(response.body, '<div class="nav-section-label">Trash</div>', 'Expected Trash sidebar section');
       assertIncludes(response.body, 'href="/agent-help"', 'Expected dashboard Agent Help link');
+      assert(!response.body.includes('href="/settings"'), 'Expected dashboard Settings link to stay hidden while Suggestions is disabled');
       assertIncludes(response.body, 'Neutral create', 'Expected dashboard to include local document title');
       assertIncludes(response.body, 'href="/new"', 'Expected dashboard New action');
       assertIncludes(response.body, 'href="/d/', 'Expected dashboard document link');
@@ -862,22 +851,22 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       assert(payload.success === true, 'Expected metrics success response');
     });
 
-    await test('D2: settings page controls default Suggestions mode for new sessions', async () => {
+    await test('D2: settings page keeps Suggestions hidden and disabled', async () => {
       const initialSettings = await get(baseUrl, '/settings', { Accept: 'text/html' });
       assert(initialSettings.status === 200, `Expected settings status 200, got ${initialSettings.status}`);
-      assertIncludes(initialSettings.body, 'Start new sessions in Suggesting mode', 'Expected Suggestions default setting');
-      assertIncludes(initialSettings.body, 'href="/settings" aria-current="page"', 'Expected active Settings navigation link');
-      assert(!initialSettings.body.includes('name="suggestionsDefaultEnabled" value="1" checked'), 'Expected Suggestions default to be off initially');
+      assertIncludes(initialSettings.body, 'Nothing to configure right now', 'Expected inert settings page');
+      assert(!initialSettings.body.includes('Start new sessions in Suggesting mode'), 'Expected Suggestions default setting to be hidden');
+      assert(!initialSettings.body.includes('name="suggestionsDefaultEnabled"'), 'Expected Suggestions checkbox to be hidden');
 
       const saved = await postFormManual(baseUrl, '/settings', {
         suggestionsDefaultEnabled: '1',
       });
       assert(saved.status === 303, `Expected settings save redirect 303, got ${saved.status}`);
       assert((saved.headers.get('location') || '').includes('/settings?notice='), 'Expected settings save notice redirect');
-      assert(db.getLocalEditorSettings().suggestionsDefaultEnabled === true, 'Expected Suggestions default to persist as enabled');
+      assert(db.getLocalEditorSettings().suggestionsDefaultEnabled === false, 'Expected Suggestions default to remain disabled');
 
       const updatedSettings = await get(baseUrl, '/settings', { Accept: 'text/html' });
-      assertIncludes(updatedSettings.body, 'name="suggestionsDefaultEnabled" value="1" checked', 'Expected Suggestions default checkbox to be checked');
+      assert(!updatedSettings.body.includes('name="suggestionsDefaultEnabled"'), 'Expected Suggestions checkbox to stay hidden');
 
       const createdForSettingsResponse = await postNoClientHeaders(baseUrl, '/documents', {
         markdown: '# Settings Doc\n\nSuggest by default',
@@ -893,7 +882,7 @@ async function runRoutePayloadValidationTests(): Promise<void> {
         'User-Agent': 'Mozilla/5.0 local-settings-test',
       });
       assert(shareHtml.status === 200, `Expected share HTML status 200, got ${shareHtml.status}`);
-      assertIncludes(shareHtml.body, 'window.__PROOF_CONFIG__.suggestionsDefaultEnabled = true;', 'Expected share HTML to enable default Suggestions mode');
+      assertIncludes(shareHtml.body, 'window.__PROOF_CONFIG__.suggestionsDefaultEnabled = false;', 'Expected share HTML to keep Suggestions disabled');
     });
 
     await test('D2: /new creates a document and redirects to a tokenized document URL', async () => {
