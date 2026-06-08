@@ -11,6 +11,7 @@ import { getCollabRuntime, startCollabRuntimeEmbedded } from './collab.js';
 import { discoveryRoutes } from './discovery-routes.js';
 import { shareWebRoutes } from './share-web-routes.js';
 import { dashboardRoutes } from './dashboard-routes.js';
+import { metricsApiRoutes } from './metrics.js';
 import {
   capabilitiesPayload,
   enforceApiClientCompatibility,
@@ -98,6 +99,7 @@ async function main(): Promise<void> {
 
   app.use(dashboardRoutes);
   app.use(discoveryRoutes);
+  app.use('/api/metrics', metricsApiRoutes);
   app.use('/api', enforceApiClientCompatibility, apiRoutes);
   app.use('/api/agent', agentRoutes);
   app.use(apiRoutes);

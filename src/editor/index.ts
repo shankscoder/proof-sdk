@@ -1226,8 +1226,8 @@ class ProofEditorImpl implements ProofEditor {
       .use(keybindingsPlugin)
       // Allow Backspace to delete empty table rows
       .use(tableKeyboardPlugin)
-      .use(marksSyncPlugin((actionMarks, view, actionMetadata) => {
-        this.handleMarksChange(actionMarks, view, actionMetadata);
+      .use(marksSyncPlugin((actionMarks, view) => {
+        this.handleMarksChange(actionMarks, view);
       }))
       .config((ctx) => {
         // Note: remarkProofMarks is now registered via .use(remarkProofMarksPlugin)
@@ -4942,6 +4942,14 @@ class ProofEditorImpl implements ProofEditor {
     if (!this.isShareMode || !this.collabEnabled || !this.editor) return;
     if (Object.keys(this.lastReceivedServerMarks).length === 0) return;
     if (this.isEditorDocStructurallyEmpty()) return;
+    if (shouldDeferShareMarksRefresh({
+      collabCanEdit: this.collabCanEdit,
+      collabUnsyncedChanges: this.collabUnsyncedChanges,
+      collabPendingLocalUpdates: this.collabPendingLocalUpdates,
+    })) {
+      this.scheduleShareMarksRefresh();
+      return;
+    }
 
     this.applyingCollabRemote = true;
     this.suppressMarksSync = true;
@@ -5720,8 +5728,7 @@ class ProofEditorImpl implements ProofEditor {
 
   private handleMarksChange(
     actionMarks: Mark[],
-    view: import('@milkdown/kit/prose/view').EditorView,
-    actionMetadata?: Record<string, StoredMark>
+    view: import('@milkdown/kit/prose/view').EditorView
   ): void {
     if (this.suppressMarksSync) return;
     // Authored-only edits can trigger marks callbacks with no actionable marks.
@@ -5738,7 +5745,7 @@ class ProofEditorImpl implements ProofEditor {
     this.sendDocumentSnapshot(view, markdown, actionMarks);
 
     const metadata = mergePendingServerMarks(
-      actionMetadata ?? getMarkMetadataWithQuotes(view.state),
+      getMarkMetadataWithQuotes(view.state),
       this.lastReceivedServerMarks,
     );
     this.lastReceivedServerMarks = { ...metadata };

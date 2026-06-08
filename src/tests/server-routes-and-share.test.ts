@@ -42,6 +42,14 @@ function assertIncludes(haystack: string, needle: string, message?: string): voi
   }
 }
 
+function sliceBetween(source: string, startNeedle: string, endNeedle: string): string {
+  const start = source.indexOf(startNeedle);
+  assert(start !== -1, `Missing block start: ${startNeedle}`);
+  const end = source.indexOf(endNeedle, start);
+  assert(end !== -1, `Missing block end after: ${startNeedle}`);
+  return source.slice(start, end);
+}
+
 async function get(base: string, path: string, headers: Record<string, string> = {}): Promise<any> {
   const response = await fetch(`${base}${path}`, { headers: { ...CLIENT_HEADERS, ...headers } });
   const body = await response.text();
@@ -299,12 +307,14 @@ async function withEphemeralApiServer(run: (baseUrl: string) => Promise<void>): 
   const { discoveryRoutes } = await import('../../server/discovery-routes.ts');
   const { shareWebRoutes } = await import('../../server/share-web-routes.ts');
   const { dashboardRoutes } = await import('../../server/dashboard-routes.ts');
+  const { metricsApiRoutes } = await import('../../server/metrics.ts');
   const { enforceApiClientCompatibility } = await import('../../server/client-capabilities.ts');
   const app = express();
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: false }));
   app.use(dashboardRoutes);
   app.use(discoveryRoutes);
+  app.use('/api/metrics', metricsApiRoutes);
   app.use('/api', enforceApiClientCompatibility, apiRoutes);
   app.use('/api/agent', agentRoutes);
   app.use(apiRoutes);
@@ -436,6 +446,19 @@ async function runServerSourceTests(): Promise<void> {
     );
   });
 
+  await test('D1: server source mounts metrics routes before client compatibility', async () => {
+    assertIncludes(
+      serverSource,
+      "import { metricsApiRoutes } from './metrics.js';",
+      'server source should import metrics routes',
+    );
+    const metricsMount = serverSource.indexOf("app.use('/api/metrics', metricsApiRoutes);");
+    const apiMount = serverSource.indexOf("app.use('/api', enforceApiClientCompatibility, apiRoutes);");
+    assert(metricsMount !== -1, 'server source should mount /api/metrics');
+    assert(apiMount !== -1, 'server source should mount compatibility-gated /api routes');
+    assert(metricsMount < apiMount, '/api/metrics should be mounted before client compatibility middleware');
+  });
+
   await test('D1: server source parses dashboard form posts', async () => {
     assertIncludes(
       serverSource,
@@ -532,6 +555,43 @@ async function runServerSourceTests(): Promise<void> {
       editorSource,
       "toggle.addEventListener('pointerdown', keepEditorFocus);",
       'Suggesting control should avoid stealing focus on pointer interaction',
+    );
+  });
+
+  await test('D1: editor avoids local suggestion mark feedback during collab sync', async () => {
+    const callbackBlock = sliceBetween(
+      editorSource,
+      '.use(marksSyncPlugin((actionMarks, view',
+      '\n      }))',
+    );
+    assert(!callbackBlock.includes('actionMetadata'), 'marks sync callback should not pass raw action metadata as authoritative collab metadata');
+
+    const handleMarksBlock = sliceBetween(
+      editorSource,
+      '  private handleMarksChange(',
+      '\n  private serializeMarkdown',
+    );
+    assertIncludes(
+      handleMarksBlock,
+      'getMarkMetadataWithQuotes(view.state)',
+      'handleMarksChange should publish anchored mark metadata',
+    );
+    assert(!handleMarksBlock.includes('actionMetadata ??'), 'handleMarksChange should not prefer raw unanchored action metadata');
+
+    const applyCollabMarksBlock = sliceBetween(
+      editorSource,
+      '  private applyLatestCollabMarksToEditor(): void {',
+      '\n  private resetProjectionPublishState',
+    );
+    assertIncludes(
+      applyCollabMarksBlock,
+      'shouldDeferShareMarksRefresh({',
+      'collab mark application should reuse the pending-local-update defer condition',
+    );
+    assertIncludes(
+      applyCollabMarksBlock,
+      'this.scheduleShareMarksRefresh();',
+      'collab mark application should defer by scheduling a later marks refresh',
     );
   });
 
@@ -767,6 +827,15 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       assertIncludes(response.body, '/agent-docs', 'Expected help page docs link');
       assertIncludes(response.body, '/agent-setup', 'Expected help page setup link');
       assertIncludes(response.body, '/proof.SKILL.md', 'Expected help page skill link');
+    });
+
+    await test('D2: /api/metrics/mark-anchor accepts local browser metrics without client headers', async () => {
+      const response = await postNoClientHeaders(baseUrl, '/api/metrics/mark-anchor', {
+        result: 'success',
+      });
+      assert(response.status === 200, `Expected metrics status 200, got ${response.status}`);
+      const payload = await response.json();
+      assert(payload.success === true, 'Expected metrics success response');
     });
 
     await test('D2: settings page controls default Suggestions mode for new sessions', async () => {
