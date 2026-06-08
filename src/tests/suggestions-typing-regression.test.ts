@@ -1,8 +1,9 @@
 import { Fragment, Schema, Slice } from '@milkdown/kit/prose/model';
 import { EditorState, Plugin, TextSelection } from '@milkdown/kit/prose/state';
 
-import { getMarkMetadataWithQuotes, marksPluginKey } from '../editor/plugins/marks.js';
+import { applyRemoteMarks, getMarkMetadataWithQuotes, marksPluginKey } from '../editor/plugins/marks.js';
 import { wrapTransactionForSuggestions } from '../editor/plugins/suggestions.js';
+import type { StoredMark } from '../formats/marks.js';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -120,6 +121,65 @@ function run(): void {
   assert(pastedMetadata.range?.from === 6 && pastedMetadata.range?.to === 18, `Expected pasted suggestion range 6-18, got ${JSON.stringify(pastedMetadata.range)}`);
 
   console.log('✓ suggestions typing preserves cursor and tracks printable text');
+
+  state = createState('Clean document text');
+  const view = {
+    get state() {
+      return state;
+    },
+    dispatch(tr: any) {
+      state = state.apply(tr);
+    },
+  } as any;
+  const staleMetadata: Record<string, StoredMark> = {
+    'm-stale-local': {
+      kind: 'insert',
+      by: 'human:Shanks',
+      createdAt: '2026-06-08T00:00:00.000Z',
+      content: 'stale suggestion',
+      status: 'pending',
+      quote: 'text that no longer exists',
+    },
+    'authored:human:Shanks:28-29': {
+      kind: 'authored',
+      by: 'human:Shanks',
+      createdAt: '2026-06-08T00:00:00.000Z',
+      range: { from: 28, to: 29 },
+    },
+    'c-unresolved': {
+      kind: 'comment',
+      by: 'human:Shanks',
+      createdAt: '2026-06-08T00:00:00.000Z',
+      text: 'Keep unresolved comments around for a later retry',
+      threadId: 'c-unresolved',
+      thread: [],
+      replies: [],
+      resolved: false,
+      quote: 'comment anchor that is temporarily gone',
+    },
+  };
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+  let appliedMetadata: Record<string, StoredMark> | null = null;
+  try {
+    appliedMetadata = applyRemoteMarks(view, staleMetadata, { pruneUnresolvedNonCommentMarks: true });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert(appliedMetadata !== null, 'Expected stale metadata cleanup to return applied metadata');
+  assert(!('m-stale-local' in appliedMetadata), 'Expected stale suggestion metadata to be pruned');
+  assert(!('authored:human:Shanks:28-29' in appliedMetadata), 'Expected stale authored metadata to be pruned');
+  assert('c-unresolved' in appliedMetadata, 'Expected unresolved comments to be preserved');
+  assert(
+    !warnings.some((message) => message.includes('[applyRemoteMarks] Could not resolve remote mark')),
+    'Expected stale share-mark cleanup to avoid unresolved mark console warnings',
+  );
+
+  console.log('✓ stale share-mark cleanup prunes noisy local suggestion metadata');
 }
 
 try {

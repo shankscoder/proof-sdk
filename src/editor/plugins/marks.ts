@@ -282,11 +282,98 @@ function resolveRangeFromRelativeAnchors(
   return mapTextOffsetsToRange(index, startOffset, endOffset);
 }
 
+function stripMarkdownAnchorSyntax(value: string): string {
+  return value
+    .replace(/\\([\\`*_{}\[\]()#+\-.!])/g, '$1')
+    .replace(/[*_`~]/g, '');
+}
+
+function getTargetText(value: unknown, key: 'anchor' | 'contextBefore' | 'contextAfter'): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const text = (value as Record<string, unknown>)[key];
+  return typeof text === 'string' ? text.trim() : '';
+}
+
+function targetTextCandidates(text: string, normalized: boolean): string[] {
+  const candidates = normalized ? [stripMarkdownAnchorSyntax(text), text] : [text];
+  return [...new Set(candidates.map(candidate => candidate.trim()).filter(Boolean))];
+}
+
+function findTargetTextRanges(doc: ProseMirrorNode, text: string): MarkRange[] {
+  const index = buildTextIndex(doc);
+  if (!index) return [];
+  const ranges: MarkRange[] = [];
+  let start = index.text.indexOf(text);
+  while (start !== -1) {
+    const range = mapTextOffsetsToRange(index, start, start + text.length);
+    if (range) ranges.push(range);
+    start = index.text.indexOf(text, start + 1);
+  }
+  return ranges;
+}
+
+function rangeHasContext(
+  doc: ProseMirrorNode,
+  range: MarkRange,
+  contextBefore: string,
+  contextAfter: string
+): boolean {
+  const text = doc.textBetween(0, doc.content.size, '\n', '\n');
+  const index = buildTextIndex(doc);
+  if (!index) return false;
+  const startOffset = index.positions.findIndex(position => typeof position === 'number' && position >= range.from);
+  let endOffset = -1;
+  for (let i = 0; i < index.positions.length; i += 1) {
+    const position = index.positions[i];
+    if (typeof position === 'number' && position < range.to) {
+      endOffset = i + 1;
+    }
+  }
+  if (startOffset < 0 || endOffset < startOffset) return false;
+
+  if (contextBefore) {
+    const before = text.slice(0, startOffset);
+    if (!before.includes(contextBefore) && !stripMarkdownAnchorSyntax(before).includes(stripMarkdownAnchorSyntax(contextBefore))) {
+      return false;
+    }
+  }
+  if (contextAfter) {
+    const after = text.slice(endOffset);
+    if (!after.includes(contextAfter) && !stripMarkdownAnchorSyntax(after).includes(stripMarkdownAnchorSyntax(contextAfter))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function resolveRangeFromTarget(doc: ProseMirrorNode, stored: StoredMark): MarkRange | null {
+  const target = stored.target;
+  const anchor = getTargetText(target, 'anchor');
+  if (!anchor) return null;
+  const mode = target && typeof target === 'object' && !Array.isArray(target)
+    ? (target as Record<string, unknown>).mode
+    : null;
+  const normalized = mode === 'normalized';
+  const contextBefore = getTargetText(target, 'contextBefore');
+  const contextAfter = getTargetText(target, 'contextAfter');
+
+  for (const candidate of targetTextCandidates(anchor, normalized)) {
+    const ranges = findTargetTextRanges(doc, candidate)
+      .filter(range => rangeHasContext(doc, range, contextBefore, contextAfter));
+    if (ranges.length === 1) return ranges[0];
+  }
+
+  return null;
+}
+
 function resolveStoredMarkRange(doc: ProseMirrorNode, stored: StoredMark): MarkRange | null {
   const normalizedStoredQuote = typeof stored.quote === 'string'
     ? normalizeQuote(stored.quote)
     : '';
   const allowsQuoteLessAnchorFallback = stored.kind === 'authored';
+
+  const targetRange = resolveRangeFromTarget(doc, stored);
+  if (targetRange) return targetRange;
 
   const relativeRange = resolveRangeFromRelativeAnchors(doc, stored.startRel, stored.endRel);
   if (relativeRange) {
@@ -904,7 +991,7 @@ function finalizeMarkTransaction(
   tr: Transaction,
   metadata: Record<string, StoredMark>,
   options?: { isRemote?: boolean; skipDocStamp?: boolean }
-): void {
+): Record<string, StoredMark> {
   const normalized = normalizeMetadata(metadata, tr.doc);
   if (!options?.skipDocStamp) {
     tr = stampSuggestionMetadataOnDocument(view.state, tr, normalized);
@@ -915,6 +1002,7 @@ function finalizeMarkTransaction(
     tr = tr.setMeta('addToHistory', false);
   }
   view.dispatch(tr);
+  return normalized;
 }
 
 function removeSuggestionAnchors(
@@ -1665,8 +1753,8 @@ export function setMarkMetadata(view: EditorView, metadata: Record<string, Store
 export function applyRemoteMarks(
   view: EditorView,
   metadata: Record<string, StoredMark>,
-  options?: { hydrateAnchors?: boolean }
-): void {
+  options?: { hydrateAnchors?: boolean; pruneUnresolvedNonCommentMarks?: boolean }
+): Record<string, StoredMark> {
   const canonicalMetadata = canonicalizeStoredMarks(metadata);
   const hydrateAnchors = options?.hydrateAnchors !== false;
   const existingIds = getProofAnchorIds(view.state.doc);
@@ -1731,6 +1819,13 @@ export function applyRemoteMarks(
 
       const range = resolveStoredMarkRange(tr.doc, stored);
       if (!range) {
+        if (options?.pruneUnresolvedNonCommentMarks) {
+          if (stored.kind !== 'comment') {
+            delete merged[id];
+          }
+          clearMarkAnchorHydrationFailure(id);
+          continue;
+        }
         if (!isAuthored || authoredHydrationFailures < AUTHORED_ANCHOR_HYDRATION_FAILURE_BUDGET_PER_PASS) {
           console.warn(`[applyRemoteMarks] Could not resolve remote mark ${id}`);
         }
@@ -1778,7 +1873,7 @@ export function applyRemoteMarks(
     );
   }
 
-  finalizeMarkTransaction(view, tr, canonicalizeStoredMarks(merged), { isRemote: true, skipDocStamp: !hydrateAnchors });
+  return finalizeMarkTransaction(view, tr, canonicalizeStoredMarks(merged), { isRemote: true, skipDocStamp: !hydrateAnchors });
 }
 
 export function setActiveMark(view: EditorView, markId: string | null): void {
@@ -2792,8 +2887,8 @@ export function accept(view: EditorView, markId: string, parser?: MarkdownParser
 
   if (!applied) return false;
   const updatedMetadata = removeMetadataEntries(metadata, [markId]);
-  finalizeMarkTransaction(view, tr, updatedMetadata);
   markResolvedMarkIds([markId], Date.now(), RESOLVED_MARK_TOMBSTONE_TTL_MS, 'deleted');
+  finalizeMarkTransaction(view, tr, updatedMetadata);
   emitMarkEvent('suggestion.accepted', { markId, kind: mark.kind, by: mark.by });
   return true;
 }
@@ -2835,8 +2930,8 @@ export function reject(view: EditorView, markId: string): boolean {
   }
 
   const updatedMetadata = removeMetadataEntries(metadata, [markId]);
-  finalizeMarkTransaction(view, tr, updatedMetadata);
   markResolvedMarkIds([markId], Date.now(), RESOLVED_MARK_TOMBSTONE_TTL_MS, 'deleted');
+  finalizeMarkTransaction(view, tr, updatedMetadata);
   emitMarkEvent('suggestion.rejected', { markId, kind: mark.kind, by: mark.by });
   return true;
 }

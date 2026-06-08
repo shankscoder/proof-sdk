@@ -2513,6 +2513,96 @@ test('applyRemoteMarks prunes detached non-comment metadata but keeps detached c
   assertEqual(flushed['c-unresolved']?.text, 'Please resolve this orphaned comment', 'Detached comments should remain in snapshots for later retries');
 });
 
+test('applyRemoteMarks can silently prune unresolved non-comment metadata for share cleanup', () => {
+  const doc = marksSchema.node('doc', null, [
+    marksSchema.node('paragraph', null, [marksSchema.text('Clean document text')]),
+  ]);
+
+  const marksStatePlugin = new Plugin({
+    key: marksPluginKey,
+    state: {
+      init: () => ({ metadata: {}, activeMarkId: null }),
+      apply: (tr, value) => {
+        const meta = tr.getMeta(marksPluginKey);
+        if (meta?.type === 'SET_METADATA') {
+          return { ...value, metadata: meta.metadata };
+        }
+        if (meta?.type === 'SET_ACTIVE') {
+          return { ...value, activeMarkId: meta.markId ?? null };
+        }
+        return value;
+      },
+    },
+  });
+
+  let state = EditorState.create({
+    schema: marksSchema,
+    doc,
+    plugins: [marksStatePlugin],
+  });
+
+  const view = {
+    get state() {
+      return state;
+    },
+    dispatch(tr: any) {
+      state = state.apply(tr);
+    },
+  } as any;
+
+  const remoteMetadata = {
+    's-stale-local': {
+      kind: 'insert' as const,
+      by: 'human:Shanks',
+      createdAt: new Date('2026-03-02T12:00:00.000Z').toISOString(),
+      content: 'stale suggestion',
+      status: 'pending' as const,
+      quote: 'text that no longer exists',
+    },
+    'authored:human:Shanks:28-29': {
+      kind: 'authored' as const,
+      by: 'human:Shanks',
+      createdAt: new Date('2026-03-02T12:00:00.000Z').toISOString(),
+      range: { from: 28, to: 29 },
+    },
+    'c-still-useful': {
+      kind: 'comment' as const,
+      by: 'human:Shanks',
+      createdAt: new Date('2026-03-02T12:00:00.000Z').toISOString(),
+      text: 'Keep unresolved comments for later retry',
+      threadId: 'c-still-useful',
+      thread: [],
+      replies: [],
+      resolved: false,
+      quote: 'comment anchor that is temporarily gone',
+    },
+  };
+
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+  try {
+    const applied = applyRemoteMarks(view, remoteMetadata, { pruneUnresolvedNonCommentMarks: true });
+    assert(!('s-stale-local' in applied), 'Expected stale suggestion metadata to be pruned from returned metadata');
+    assert(!('authored:human:Shanks:28-29' in applied), 'Expected stale authored metadata to be pruned from returned metadata');
+    assert('c-still-useful' in applied, 'Expected unresolved comment metadata to remain');
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert(
+    !warnings.some((message) => message.includes('[applyRemoteMarks] Could not resolve remote mark')),
+    'Expected share cleanup mode to avoid noisy unresolved mark warnings',
+  );
+
+  const flushed = getMarkMetadataWithQuotes(state);
+  assert(!('s-stale-local' in flushed), 'Expected stale suggestion to stay pruned from snapshots');
+  assert(!('authored:human:Shanks:28-29' in flushed), 'Expected stale authored mark to stay pruned from snapshots');
+  assertEqual(flushed['c-still-useful']?.text, 'Keep unresolved comments for later retry', 'Expected unresolved comment metadata to remain');
+});
+
 test('metadata snapshots drop detached suggestions after anchor deletion', () => {
   const markId = 's-after-delete';
   const detachedDoc = marksSchema.node('doc', null, [

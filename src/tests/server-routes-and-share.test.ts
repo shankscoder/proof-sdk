@@ -593,6 +593,26 @@ async function runServerSourceTests(): Promise<void> {
       'this.scheduleShareMarksRefresh();',
       'collab mark application should defer by scheduling a later marks refresh',
     );
+    assertIncludes(
+      applyCollabMarksBlock,
+      'const appliedMetadata = this.applyExternalMarks(this.lastReceivedServerMarks);',
+      'collab mark application should capture pruned metadata from applyExternalMarks',
+    );
+    assertIncludes(
+      applyCollabMarksBlock,
+      'collabClient.setMarksMetadata(appliedMetadata);',
+      'collab mark application should write pruned metadata back to the live marks map',
+    );
+    const applyExternalMarksBlock = sliceBetween(
+      editorSource,
+      '  applyExternalMarks(marks: Record<string, StoredMark>):',
+      '\n  private applyLatestCollabMarksToEditor',
+    );
+    assertIncludes(
+      applyExternalMarksBlock,
+      'pruneUnresolvedNonCommentMarks: this.isShareMode || this.collabEnabled',
+      'share/collab remote mark application should prune stale unresolved non-comment metadata',
+    );
   });
 
   await test('D1: server source publishes a health endpoint', async () => {

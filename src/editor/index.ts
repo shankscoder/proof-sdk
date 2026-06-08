@@ -1580,12 +1580,12 @@ class ProofEditorImpl implements ProofEditor {
         if (!preserveCurrentDocument) {
           const contentWithMarks = embedMarks(doc.markdown, doc.marks as Record<string, StoredMark>);
           this.loadDocument(contentWithMarks);
+          let appliedInitialMarks: Record<string, StoredMark> | null = null;
           if (doc.marks && Object.keys(doc.marks).length > 0) {
-            this.applyExternalMarks(doc.marks as Record<string, StoredMark>);
+            appliedInitialMarks = this.applyExternalMarks(doc.marks as Record<string, StoredMark>);
           }
-          const initialMarks = doc.marks
-            ? { ...(doc.marks as Record<string, StoredMark>) }
-            : {};
+          const sourceInitialMarks = appliedInitialMarks ?? (doc.marks as Record<string, StoredMark>);
+          const initialMarks = doc.marks ? { ...sourceInitialMarks } : {};
           this.lastReceivedServerMarks = initialMarks;
           this.initialMarksSynced = true;
         }
@@ -4927,15 +4927,20 @@ class ProofEditorImpl implements ProofEditor {
     this.scheduleBannerLayoutUpdate();
   }
 
-  applyExternalMarks(marks: Record<string, StoredMark>): void {
-    if (!this.editor) return;
+  applyExternalMarks(marks: Record<string, StoredMark>): Record<string, StoredMark> | null {
+    if (!this.editor) return null;
 
+    let appliedMetadata: Record<string, StoredMark> | null = null;
     this.editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
       // Use applyRemoteMarks to create ProseMirror anchors for new marks
       // (using the `quote` field) and merge metadata for existing marks.
-      applyRemoteMarks(view, marks, { hydrateAnchors: this.collabCanEdit });
+      appliedMetadata = applyRemoteMarks(view, marks, {
+        hydrateAnchors: this.collabCanEdit,
+        pruneUnresolvedNonCommentMarks: this.isShareMode || this.collabEnabled,
+      });
     });
+    return appliedMetadata;
   }
 
   private applyLatestCollabMarksToEditor(): void {
@@ -4954,7 +4959,13 @@ class ProofEditorImpl implements ProofEditor {
     this.applyingCollabRemote = true;
     this.suppressMarksSync = true;
     try {
-      this.applyExternalMarks(this.lastReceivedServerMarks);
+      const appliedMetadata = this.applyExternalMarks(this.lastReceivedServerMarks);
+      if (appliedMetadata) {
+        this.lastReceivedServerMarks = { ...appliedMetadata };
+        if (this.collabCanEdit) {
+          collabClient.setMarksMetadata(appliedMetadata);
+        }
+      }
     } finally {
       this.suppressMarksSync = false;
       this.applyingCollabRemote = false;

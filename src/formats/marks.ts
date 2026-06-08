@@ -214,6 +214,12 @@ export interface StoredMark {
   by?: string;
   createdAt?: string;
   range?: MarkRange;
+  target?: {
+    anchor?: string;
+    mode?: 'exact' | 'normalized' | string;
+    contextBefore?: string;
+    contextAfter?: string;
+  };
   /** Relative anchor start (char-offset form: `char:<offset>`). */
   startRel?: string;
   /** Relative anchor end (char-offset form: `char:<offset>`). */
