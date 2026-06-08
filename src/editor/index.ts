@@ -2526,6 +2526,7 @@ class ProofEditorImpl implements ProofEditor {
     });
     this.updateEditableState();
     this.updateShareBannerTitleDisplay();
+    this.updateShareBannerSuggestionsDisplay();
   }
 
   private ensureShareWebSocketConnection(): void {
@@ -3464,7 +3465,7 @@ class ProofEditorImpl implements ProofEditor {
     ) return;
 
     const enabled = this.getSuggestionsModeEnabled();
-    const canToggle = this.collabCanEdit;
+    const canToggle = Boolean(this.editor);
     this.shareBannerSuggestionsToggleEl.disabled = !canToggle;
     this.shareBannerSuggestionsToggleEl.setAttribute('aria-pressed', enabled ? 'true' : 'false');
     this.shareBannerSuggestionsToggleEl.setAttribute(
@@ -3475,6 +3476,17 @@ class ProofEditorImpl implements ProofEditor {
     this.shareBannerSuggestionsThumbEl.style.transform = enabled ? 'translateX(12px)' : '';
     this.shareBannerSuggestionsLabelEl.style.color = enabled ? '#4b5563' : '#6b7280';
     this.shareBannerSuggestionsLabelEl.style.opacity = canToggle ? '1' : '0.55';
+  }
+
+  private focusEditorAfterSuggestionsToggle(): void {
+    if (!this.editor) return;
+    requestAnimationFrame(() => {
+      if (!this.editor) return;
+      this.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        view.focus();
+      });
+    });
   }
 
   private createSuggestionsModeControl(): HTMLElement {
@@ -3500,10 +3512,20 @@ class ProofEditorImpl implements ProofEditor {
     this.shareBannerSuggestionsThumbEl = thumb;
     this.shareBannerSuggestionsLabelEl = label;
 
-    const onToggle = () => {
-      if (!this.collabCanEdit) return;
+    const keepEditorFocus = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    toggle.addEventListener('pointerdown', keepEditorFocus);
+    label.addEventListener('pointerdown', keepEditorFocus);
+
+    const onToggle = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!this.editor) return;
       this.toggleSuggestions();
       this.updateShareBannerSuggestionsDisplay();
+      this.focusEditorAfterSuggestionsToggle();
       this.triggerHaptic('selection');
     };
     toggle.onclick = onToggle;

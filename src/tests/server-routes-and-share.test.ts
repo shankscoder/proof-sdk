@@ -523,6 +523,16 @@ async function runServerSourceTests(): Promise<void> {
       'this.toggleSuggestions();',
       'Suggesting control should toggle the existing suggestion mode',
     );
+    assertIncludes(
+      editorSource,
+      'focusEditorAfterSuggestionsToggle',
+      'Suggesting control should return keyboard focus to the editor after toggling',
+    );
+    assertIncludes(
+      editorSource,
+      "toggle.addEventListener('pointerdown', keepEditorFocus);",
+      'Suggesting control should avoid stealing focus on pointer interaction',
+    );
   });
 
   await test('D1: server source publishes a health endpoint', async () => {
