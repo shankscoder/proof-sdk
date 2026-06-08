@@ -707,6 +707,9 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       assertIncludes(rootPage.body, `class="tree-link active" href="/" style="--depth: 0;" aria-current="page"`, 'Expected Home active in sidebar tree at root');
       assertIncludes(rootPage.body, `href="/folders/${rootFolder.id}" style="--depth: 1;"`, 'Expected parent folder nested under Home in sidebar tree');
       assertIncludes(rootPage.body, `href="/folders/${childFolder.id}" style="--depth: 2;"`, 'Expected nested folder in sidebar tree');
+      assertIncludes(rootPage.body, 'data-rename-toggle>Rename</button>', 'Expected folder rename toggle button');
+      assertIncludes(rootPage.body, '<form hidden class="folder-rename-form"', 'Expected folder rename form hidden by default');
+      assertIncludes(rootPage.body, 'contenteditable="true" role="textbox"', 'Expected contenteditable folder rename field');
       assert(!rootPage.body.includes('Folder Doc'), 'Expected moved document to leave root folder listing');
 
       const childPage = await get(baseUrl, `/folders/${childFolder.id}`, { Accept: 'text/html' });

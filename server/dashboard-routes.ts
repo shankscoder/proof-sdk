@@ -241,24 +241,32 @@ function renderSidebar(view: DashboardView, currentFolderId: string | null): str
 
 function renderFolderRow(folder: LocalDashboardFolderRow, folderOptions: LocalDashboardFolderRow[], returnTo: string): string {
   return `<article class="folder-row">
-    <a class="folder-link" href="${folderHref(folder.id)}">
-      <span class="folder-icon" aria-hidden="true">Folder</span>
-      <span class="folder-name">${escapeHtml(folder.name)}</span>
-    </a>
-    <form class="compact-form" method="post" action="/dashboard/folders/${encodeURIComponent(folder.id)}/rename">
-      <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
-      <input name="name" value="${escapeHtml(folder.name)}" aria-label="Rename ${escapeHtml(folder.name)}" />
-      <button type="submit">Rename</button>
-    </form>
-    <form class="compact-form" method="post" action="/dashboard/folders/${encodeURIComponent(folder.id)}/move">
-      <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
-      ${renderFolderSelect(folderOptions, folder.parent_id, folder.id)}
-      <button type="submit">Move</button>
-    </form>
-    <form class="compact-form" method="post" action="/dashboard/folders/${encodeURIComponent(folder.id)}/delete">
-      <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
-      <button class="danger-button" type="submit">Delete</button>
-    </form>
+    <span class="folder-main">
+      <a class="folder-link" href="${folderHref(folder.id)}" data-folder-link>
+        <span class="folder-icon" aria-hidden="true">Folder</span>
+        <span class="folder-name">${escapeHtml(folder.name)}</span>
+      </a>
+      <form hidden class="folder-rename-form" method="post" action="/dashboard/folders/${encodeURIComponent(folder.id)}/rename" data-rename-form>
+        <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
+        <input type="hidden" name="name" value="${escapeHtml(folder.name)}" data-rename-input />
+        <span class="folder-icon" aria-hidden="true">Folder</span>
+        <span class="folder-name-editor" contenteditable="true" role="textbox" spellcheck="false" data-rename-editor aria-label="Rename ${escapeHtml(folder.name)}">${escapeHtml(folder.name)}</span>
+        <button type="submit">Save</button>
+        <button class="secondary-link" type="button" data-rename-cancel>Cancel</button>
+      </form>
+    </span>
+    <span class="row-actions folder-actions">
+      <button class="secondary-link" type="button" data-rename-toggle>Rename</button>
+      <form class="compact-form" method="post" action="/dashboard/folders/${encodeURIComponent(folder.id)}/move">
+        <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
+        ${renderFolderSelect(folderOptions, folder.parent_id, folder.id)}
+        <button type="submit">Move</button>
+      </form>
+      <form method="post" action="/dashboard/folders/${encodeURIComponent(folder.id)}/delete">
+        <input type="hidden" name="returnTo" value="${escapeHtml(returnTo)}" />
+        <button class="danger-button" type="submit">Delete</button>
+      </form>
+    </span>
   </article>`;
 }
 
@@ -559,12 +567,17 @@ export function renderDashboardHtml(view: DashboardView): string {
       .folder-row,
       .document-row {
         display: grid;
-        grid-template-columns: minmax(220px, 1fr) auto auto;
         gap: 16px;
         align-items: center;
         min-height: 76px;
         padding: 14px 18px;
         border-top: 1px solid var(--line);
+      }
+      .folder-row {
+        grid-template-columns: minmax(220px, 1fr) auto;
+      }
+      .document-row {
+        grid-template-columns: minmax(220px, 1fr) auto auto;
       }
       .folder-row:first-child,
       .document-row:first-child {
@@ -575,6 +588,7 @@ export function renderDashboardHtml(view: DashboardView): string {
         background: #fbfcf9;
       }
       .folder-link,
+      .folder-main,
       .document-main {
         min-width: 0;
         display: flex;
@@ -589,6 +603,21 @@ export function renderDashboardHtml(view: DashboardView): string {
         gap: 10px;
         font-weight: 650;
       }
+      .folder-main {
+        gap: 0;
+      }
+      .folder-rename-form {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+      }
+      .folder-rename-form[hidden],
+      .folder-row.renaming [data-folder-link],
+      .folder-row.renaming [data-rename-toggle] {
+        display: none;
+      }
       .folder-icon {
         color: var(--muted);
         font-size: 13px;
@@ -599,6 +628,25 @@ export function renderDashboardHtml(view: DashboardView): string {
         text-overflow: ellipsis;
         white-space: nowrap;
         font-weight: 650;
+      }
+      .folder-name-editor {
+        min-width: 80px;
+        max-width: 420px;
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        min-height: 36px;
+        padding: 7px 10px;
+        font-weight: 650;
+        outline: none;
+      }
+      .folder-name-editor:focus {
+        border-color: #b7bfb5;
+        box-shadow: 0 0 0 3px rgba(22, 26, 23, 0.06);
       }
       .document-preview {
         overflow: hidden;
@@ -714,6 +762,12 @@ export function renderDashboardHtml(view: DashboardView): string {
           grid-template-columns: 1fr;
           gap: 10px;
         }
+        .folder-rename-form {
+          flex-wrap: wrap;
+        }
+        .folder-name-editor {
+          max-width: none;
+        }
         .document-meta,
         .row-actions {
           justify-content: flex-start;
@@ -771,6 +825,88 @@ export function renderDashboardHtml(view: DashboardView): string {
         </section>
       </main>
     </div>
+    <script>
+      (() => {
+        const normalizeName = (value) => value.replace(/\\s+/g, ' ').trim();
+        const syncRenameInput = (form) => {
+          const editor = form.querySelector('[data-rename-editor]');
+          const input = form.querySelector('[data-rename-input]');
+          if (!editor || !input) return '';
+          const value = normalizeName(editor.textContent || '');
+          input.value = value;
+          return value;
+        };
+        const closeRename = (row, reset) => {
+          const form = row.querySelector('[data-rename-form]');
+          const editor = row.querySelector('[data-rename-editor]');
+          const input = row.querySelector('[data-rename-input]');
+          if (!form || !editor || !input) return;
+          if (reset) editor.textContent = input.value;
+          form.hidden = true;
+          row.classList.remove('renaming');
+        };
+        const openRename = (row) => {
+          const form = row.querySelector('[data-rename-form]');
+          const editor = row.querySelector('[data-rename-editor]');
+          const input = row.querySelector('[data-rename-input]');
+          if (!form || !editor || !input) return;
+          editor.textContent = input.value;
+          row.classList.add('renaming');
+          form.hidden = false;
+          editor.focus();
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          const selection = window.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        };
+
+        document.addEventListener('click', (event) => {
+          const target = event.target instanceof Element ? event.target : null;
+          if (!target) return;
+          const toggle = target.closest('[data-rename-toggle]');
+          if (toggle) {
+            const row = toggle.closest('.folder-row');
+            if (row) openRename(row);
+            return;
+          }
+          const cancel = target.closest('[data-rename-cancel]');
+          if (cancel) {
+            const row = cancel.closest('.folder-row');
+            if (row) closeRename(row, true);
+          }
+        });
+
+        document.addEventListener('input', (event) => {
+          const editor = event.target instanceof Element ? event.target.closest('[data-rename-editor]') : null;
+          const form = editor?.closest('[data-rename-form]');
+          if (form) syncRenameInput(form);
+        });
+
+        document.addEventListener('keydown', (event) => {
+          const editor = event.target instanceof Element ? event.target.closest('[data-rename-editor]') : null;
+          const form = editor?.closest('[data-rename-form]');
+          if (!editor || !form) return;
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            form.requestSubmit();
+          } else if (event.key === 'Escape') {
+            event.preventDefault();
+            const row = form.closest('.folder-row');
+            if (row) closeRename(row, true);
+          }
+        });
+
+        document.addEventListener('submit', (event) => {
+          const form = event.target instanceof HTMLFormElement ? event.target : null;
+          if (!form?.matches('[data-rename-form]')) return;
+          const value = syncRenameInput(form);
+          if (value) return;
+          event.preventDefault();
+          form.querySelector('[data-rename-editor]')?.focus();
+        });
+      })();
+    </script>
   </body>
 </html>`;
 }
