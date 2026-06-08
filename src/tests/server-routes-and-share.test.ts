@@ -502,6 +502,29 @@ async function runServerSourceTests(): Promise<void> {
     );
   });
 
+  await test('D1: editor share toolbar exposes Suggesting toggle', async () => {
+    assertIncludes(
+      editorSource,
+      'share-pill-suggesting-control',
+      'share toolbar should include a visible Suggesting control',
+    );
+    assertIncludes(
+      editorSource,
+      "label.textContent = 'Suggesting';",
+      'share toolbar should label the Suggesting control',
+    );
+    assertIncludes(
+      editorSource,
+      "enabled ? 'Turn Suggesting mode off' : 'Turn Suggesting mode on'",
+      'Suggesting toggle should expose accessible on/off labels',
+    );
+    assertIncludes(
+      editorSource,
+      'this.toggleSuggestions();',
+      'Suggesting control should toggle the existing suggestion mode',
+    );
+  });
+
   await test('D1: server source publishes a health endpoint', async () => {
     assertIncludes(
       serverSource,

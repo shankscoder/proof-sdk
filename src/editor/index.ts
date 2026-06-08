@@ -1068,6 +1068,10 @@ class ProofEditorImpl implements ProofEditor {
   private shareBannerAgentSlotEl: HTMLElement | null = null;
   private shareBannerSyncDotEl: HTMLElement | null = null;
   private shareBannerSyncLabelEl: HTMLElement | null = null;
+  private shareBannerSuggestionsToggleEl: HTMLButtonElement | null = null;
+  private shareBannerSuggestionsTrackEl: HTMLElement | null = null;
+  private shareBannerSuggestionsThumbEl: HTMLElement | null = null;
+  private shareBannerSuggestionsLabelEl: HTMLElement | null = null;
   private shareBannerTitleEditing: boolean = false;
   private shareTitlePersistSeq: number = 0;
   private shareLastStatusLabel: string = '';
@@ -3041,6 +3045,53 @@ class ProofEditorImpl implements ProofEditor {
         background:rgba(0,0,0,0.10);
         flex-shrink:0;
       }
+      #share-banner .share-pill-suggesting-control {
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        flex-shrink:0;
+      }
+      #share-banner .share-pill-suggesting-toggle {
+        position:relative;
+        width:34px;
+        height:22px;
+        border:0;
+        border-radius:999px;
+        padding:0;
+        background:transparent;
+        cursor:pointer;
+        flex:0 0 auto;
+      }
+      #share-banner .share-pill-suggesting-toggle:disabled {
+        cursor:default;
+        opacity:0.55;
+      }
+      #share-banner .share-pill-suggesting-track {
+        position:absolute;
+        inset:0;
+        border-radius:999px;
+        background:#cbd5e1;
+        transition:background 0.15s;
+      }
+      #share-banner .share-pill-suggesting-thumb {
+        position:absolute;
+        top:3px;
+        left:3px;
+        width:16px;
+        height:16px;
+        border-radius:999px;
+        background:#fff;
+        box-shadow:0 1px 3px rgba(15,23,42,0.25);
+        transition:transform 0.15s;
+      }
+      #share-banner .share-pill-suggesting-label {
+        color:#6b7280;
+        font-size:12px;
+        font-weight:600;
+        line-height:1;
+        white-space:nowrap;
+        cursor:pointer;
+      }
       #share-banner .proof-avatar-tooltip {
         position:absolute;
         top:calc(100% + 6px);
@@ -3108,6 +3159,12 @@ class ProofEditorImpl implements ProofEditor {
           display:none !important;
         }
         #share-banner .share-pill-status-sep {
+          display:none !important;
+        }
+        #share-banner .share-pill-suggesting-control {
+          gap:6px !important;
+        }
+        #share-banner .share-pill-suggesting-label {
           display:none !important;
         }
         #share-banner .proof-avatar-tooltip {
@@ -3388,6 +3445,75 @@ class ProofEditorImpl implements ProofEditor {
     this.shareBannerSyncLabelEl.style.display = this.shouldShowStatusText(statusText) ? '' : 'none';
   }
 
+  private getSuggestionsModeEnabled(): boolean {
+    if (!this.editor) return false;
+    let enabled = false;
+    this.editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      enabled = isSuggestionsEnabled(view.state);
+    });
+    return enabled;
+  }
+
+  private updateShareBannerSuggestionsDisplay(): void {
+    if (
+      !this.shareBannerSuggestionsToggleEl
+      || !this.shareBannerSuggestionsTrackEl
+      || !this.shareBannerSuggestionsThumbEl
+      || !this.shareBannerSuggestionsLabelEl
+    ) return;
+
+    const enabled = this.getSuggestionsModeEnabled();
+    const canToggle = this.collabCanEdit;
+    this.shareBannerSuggestionsToggleEl.disabled = !canToggle;
+    this.shareBannerSuggestionsToggleEl.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    this.shareBannerSuggestionsToggleEl.setAttribute(
+      'aria-label',
+      enabled ? 'Turn Suggesting mode off' : 'Turn Suggesting mode on',
+    );
+    this.shareBannerSuggestionsTrackEl.style.background = enabled ? '#3b68f6' : '#cbd5e1';
+    this.shareBannerSuggestionsThumbEl.style.transform = enabled ? 'translateX(12px)' : '';
+    this.shareBannerSuggestionsLabelEl.style.color = enabled ? '#4b5563' : '#6b7280';
+    this.shareBannerSuggestionsLabelEl.style.opacity = canToggle ? '1' : '0.55';
+  }
+
+  private createSuggestionsModeControl(): HTMLElement {
+    const container = document.createElement('span');
+    container.className = 'share-pill-suggesting-control';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'share-pill-suggesting-toggle';
+
+    const track = document.createElement('span');
+    track.className = 'share-pill-suggesting-track';
+    const thumb = document.createElement('span');
+    thumb.className = 'share-pill-suggesting-thumb';
+    toggle.append(track, thumb);
+
+    const label = document.createElement('span');
+    label.className = 'share-pill-suggesting-label';
+    label.textContent = 'Suggesting';
+
+    this.shareBannerSuggestionsToggleEl = toggle;
+    this.shareBannerSuggestionsTrackEl = track;
+    this.shareBannerSuggestionsThumbEl = thumb;
+    this.shareBannerSuggestionsLabelEl = label;
+
+    const onToggle = () => {
+      if (!this.collabCanEdit) return;
+      this.toggleSuggestions();
+      this.updateShareBannerSuggestionsDisplay();
+      this.triggerHaptic('selection');
+    };
+    toggle.onclick = onToggle;
+    label.onclick = onToggle;
+
+    container.append(toggle, label);
+    this.updateShareBannerSuggestionsDisplay();
+    return container;
+  }
+
   private renderShareBannerContent(banner: HTMLElement, otherViewerCount: number): void {
     this.ensureShareBannerResponsiveCSS();
     this.shareOtherViewerCount = otherViewerCount;
@@ -3397,12 +3523,14 @@ class ProofEditorImpl implements ProofEditor {
       && this.shareBannerAgentSlotEl
       && this.shareBannerSyncDotEl
       && this.shareBannerSyncLabelEl
+      && this.shareBannerSuggestionsToggleEl
       && banner.contains(this.shareBannerTitleEl)
     ) {
       this.updateShareBannerTitleDisplay();
       this.updateShareBannerPresenceDisplay();
       this.updateShareBannerAgentControlDisplay();
       this.updateShareBannerSyncDisplay();
+      this.updateShareBannerSuggestionsDisplay();
       this.scheduleBannerLayoutUpdate();
       return;
     }
@@ -3451,8 +3579,22 @@ class ProofEditorImpl implements ProofEditor {
     this.updateShareBannerSyncDisplay();
 
     const shareBtn = this.createShareMenuButton();
+    const suggestionsSep = document.createElement('span');
+    suggestionsSep.className = 'share-pill-status-sep';
+    const suggestionsControl = this.createSuggestionsModeControl();
 
-    banner.replaceChildren(wordmark, separator, title, syncStatusSep, syncStatusInline, avatars, agentSlot, shareBtn);
+    banner.replaceChildren(
+      wordmark,
+      separator,
+      title,
+      syncStatusSep,
+      syncStatusInline,
+      avatars,
+      agentSlot,
+      shareBtn,
+      suggestionsSep,
+      suggestionsControl,
+    );
     this.scheduleBannerLayoutUpdate();
   }
 
@@ -4740,6 +4882,10 @@ class ProofEditorImpl implements ProofEditor {
     this.shareBannerAgentSlotEl = null;
     this.shareBannerSyncDotEl = null;
     this.shareBannerSyncLabelEl = null;
+    this.shareBannerSuggestionsToggleEl = null;
+    this.shareBannerSuggestionsTrackEl = null;
+    this.shareBannerSuggestionsThumbEl = null;
+    this.shareBannerSuggestionsLabelEl = null;
     if (this.shareStatusHideTimer) {
       clearTimeout(this.shareStatusHideTimer);
       this.shareStatusHideTimer = null;
@@ -5386,6 +5532,7 @@ class ProofEditorImpl implements ProofEditor {
       enableSuggestions(view);
       console.log('[suggestions] Default Suggestions mode enabled for this session');
     });
+    this.updateShareBannerSuggestionsDisplay();
   }
 
   private posToLineCol(doc: import('@milkdown/kit/prose/model').Node, pos: number): { line: number; col: number } {
@@ -6585,6 +6732,7 @@ class ProofEditorImpl implements ProofEditor {
       enableSuggestions(view);
       console.log('[enableSuggestions] Suggestions enabled');
     });
+    this.updateShareBannerSuggestionsDisplay();
   }
 
   /**
@@ -6601,6 +6749,7 @@ class ProofEditorImpl implements ProofEditor {
       disableSuggestions(view);
       console.log('[disableSuggestions] Suggestions disabled');
     });
+    this.updateShareBannerSuggestionsDisplay();
   }
 
   /**
@@ -6618,6 +6767,7 @@ class ProofEditorImpl implements ProofEditor {
       enabled = toggleSuggestions(view);
       console.log('[toggleSuggestions] Suggestions:', enabled ? 'enabled' : 'disabled');
     });
+    this.updateShareBannerSuggestionsDisplay();
     return enabled;
   }
 
