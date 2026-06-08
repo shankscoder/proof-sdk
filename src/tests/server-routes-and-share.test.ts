@@ -489,6 +489,19 @@ async function runServerSourceTests(): Promise<void> {
     );
   });
 
+  await test('D1: editor reads dashboard default Suggestions mode config', async () => {
+    assertIncludes(
+      editorSource,
+      'suggestionsDefaultEnabled',
+      'editor should read the local default Suggestions mode setting',
+    );
+    assertIncludes(
+      editorSource,
+      'applyDefaultSuggestionsMode',
+      'editor should apply the default Suggestions mode during startup',
+    );
+  });
+
   await test('D1: server source publishes a health endpoint', async () => {
     assertIncludes(
       serverSource,
@@ -721,6 +734,40 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       assertIncludes(response.body, '/agent-docs', 'Expected help page docs link');
       assertIncludes(response.body, '/agent-setup', 'Expected help page setup link');
       assertIncludes(response.body, '/proof.SKILL.md', 'Expected help page skill link');
+    });
+
+    await test('D2: settings page controls default Suggestions mode for new sessions', async () => {
+      const initialSettings = await get(baseUrl, '/settings', { Accept: 'text/html' });
+      assert(initialSettings.status === 200, `Expected settings status 200, got ${initialSettings.status}`);
+      assertIncludes(initialSettings.body, 'Start new sessions in Suggesting mode', 'Expected Suggestions default setting');
+      assertIncludes(initialSettings.body, 'href="/settings" aria-current="page"', 'Expected active Settings navigation link');
+      assert(!initialSettings.body.includes('name="suggestionsDefaultEnabled" value="1" checked'), 'Expected Suggestions default to be off initially');
+
+      const saved = await postFormManual(baseUrl, '/settings', {
+        suggestionsDefaultEnabled: '1',
+      });
+      assert(saved.status === 303, `Expected settings save redirect 303, got ${saved.status}`);
+      assert((saved.headers.get('location') || '').includes('/settings?notice='), 'Expected settings save notice redirect');
+      assert(db.getLocalEditorSettings().suggestionsDefaultEnabled === true, 'Expected Suggestions default to persist as enabled');
+
+      const updatedSettings = await get(baseUrl, '/settings', { Accept: 'text/html' });
+      assertIncludes(updatedSettings.body, 'name="suggestionsDefaultEnabled" value="1" checked', 'Expected Suggestions default checkbox to be checked');
+
+      const createdForSettingsResponse = await postNoClientHeaders(baseUrl, '/documents', {
+        markdown: '# Settings Doc\n\nSuggest by default',
+        marks: {},
+        title: 'Settings Doc',
+      });
+      assert(createdForSettingsResponse.status === 200, `Expected settings doc create status 200, got ${createdForSettingsResponse.status}`);
+      const createdForSettings = await createdForSettingsResponse.json();
+      const settingsSlug = String(createdForSettings.slug);
+      const settingsToken = String(createdForSettings.accessToken);
+      const shareHtml = await get(baseUrl, `/d/${settingsSlug}?token=${encodeURIComponent(settingsToken)}`, {
+        Accept: 'text/html',
+        'User-Agent': 'Mozilla/5.0 local-settings-test',
+      });
+      assert(shareHtml.status === 200, `Expected share HTML status 200, got ${shareHtml.status}`);
+      assertIncludes(shareHtml.body, 'window.__PROOF_CONFIG__.suggestionsDefaultEnabled = true;', 'Expected share HTML to enable default Suggestions mode');
     });
 
     await test('D2: /new creates a document and redirects to a tokenized document URL', async () => {

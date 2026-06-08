@@ -10,6 +10,7 @@ import {
   deleteLocalDashboardFolder,
   getLocalDashboardFolder,
   getLocalDashboardFolderBreadcrumbs,
+  getLocalEditorSettings,
   listLocalDashboardFolderOptions,
   listLocalDashboardFolders,
   listLocalDashboardDocuments,
@@ -19,9 +20,11 @@ import {
   renameLocalDashboardFolder,
   resumeDocument,
   revokeDocumentAccessTokens,
+  updateLocalEditorSettings,
   type DashboardDocumentRow,
   type DashboardParticipantRow,
   type LocalDashboardFolderRow,
+  type LocalEditorSettings,
 } from './db.js';
 import { refreshSnapshotForSlug } from './snapshot.js';
 import { canonicalizeStoredMarks } from '../src/formats/marks.js';
@@ -237,6 +240,7 @@ function renderSidebar(view: DashboardView, currentFolderId: string | null): str
       <a class="nav-link${trashActive ? ' active' : ''}" href="/trash"${trashActive ? ' aria-current="page"' : ''}>Trash${view.trashCount > 0 ? ` (${view.trashCount})` : ''}</a>
       <div class="nav-section-label">Help</div>
       <a class="nav-link" href="/agent-help">Agent Help</a>
+      <a class="nav-link" href="/settings">Settings</a>
     </nav>
   </aside>`;
 }
@@ -1144,6 +1148,261 @@ function renderAgentHelpHtml(req: Request): string {
 </html>`;
 }
 
+function renderSettingsHtml(settings: LocalEditorSettings, query: Request['query'] = {}): string {
+  const notice = typeof query.notice === 'string'
+    ? `<p class="notice">${escapeHtml(query.notice)}</p>`
+    : '';
+  const error = typeof query.error === 'string'
+    ? `<p class="notice error">${escapeHtml(query.error)}</p>`
+    : '';
+  const checked = settings.suggestionsDefaultEnabled ? ' checked' : '';
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proof Settings</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f8f5;
+        --surface: #ffffff;
+        --text: #161a17;
+        --muted: #667068;
+        --line: #e1e5dd;
+        --accent: #111111;
+        --danger: #b42318;
+        --blue: #3b68f6;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      .settings-layout {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+      .sidebar {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        height: 100vh;
+        overflow: auto;
+        border-right: 1px solid var(--line);
+        background: var(--surface);
+        padding: 28px 18px;
+      }
+      .sidebar-brand {
+        display: inline-flex;
+        margin-bottom: 28px;
+        color: var(--text);
+        font-size: 24px;
+        font-weight: 750;
+        line-height: 1;
+        text-decoration: none;
+      }
+      .nav-section-label {
+        margin: 18px 0 6px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 750;
+      }
+      .nav-link {
+        display: flex;
+        align-items: center;
+        min-height: 34px;
+        padding: 0 10px;
+        border-radius: 8px;
+        color: var(--text);
+        text-decoration: none;
+      }
+      .nav-link:hover,
+      .nav-link.active {
+        background: #ecefeb;
+        font-weight: 750;
+      }
+      .content {
+        width: min(900px, 100%);
+        padding: 36px;
+      }
+      .breadcrumbs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .breadcrumbs a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 30px;
+        line-height: 1.1;
+        letter-spacing: 0;
+      }
+      .subtitle {
+        margin: 0 0 24px;
+        color: var(--muted);
+      }
+      .settings-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 22px;
+      }
+      .setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+      }
+      .setting-title {
+        margin: 0 0 4px;
+        font-weight: 750;
+      }
+      .setting-copy {
+        margin: 0;
+        max-width: 620px;
+        color: var(--muted);
+      }
+      .switch {
+        position: relative;
+        display: inline-flex;
+        width: 48px;
+        height: 28px;
+        flex: 0 0 auto;
+      }
+      .switch input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+      }
+      .switch-track {
+        position: absolute;
+        inset: 0;
+        border-radius: 999px;
+        background: #cbd5e1;
+        transition: background 0.15s;
+      }
+      .switch-track::after {
+        content: "";
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        width: 20px;
+        height: 20px;
+        border-radius: 999px;
+        background: #fff;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+        transition: transform 0.15s;
+      }
+      .switch input:checked + .switch-track {
+        background: var(--blue);
+      }
+      .switch input:checked + .switch-track::after {
+        transform: translateX(20px);
+      }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 22px;
+      }
+      button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 40px;
+        padding: 0 16px;
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        background: var(--accent);
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .notice {
+        margin: 0 0 12px;
+        color: #335c46;
+      }
+      .notice.error {
+        color: var(--danger);
+      }
+      @media (max-width: 820px) {
+        .settings-layout {
+          display: block;
+        }
+        .sidebar {
+          position: static;
+          height: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          padding: 20px 18px;
+        }
+        .sidebar-brand {
+          margin-bottom: 16px;
+        }
+        .content {
+          padding: 24px 18px 44px;
+        }
+        .setting-row {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="settings-layout">
+      <aside class="sidebar">
+        <a class="sidebar-brand" href="/">Proof</a>
+        <nav aria-label="Settings navigation">
+          <div class="nav-section-label">Workspace</div>
+          <a class="nav-link" href="/">Home</a>
+          <a class="nav-link active" href="/settings" aria-current="page">Settings</a>
+          <div class="nav-section-label">Help</div>
+          <a class="nav-link" href="/agent-help">Agent Help</a>
+        </nav>
+      </aside>
+      <main class="content">
+        <nav class="breadcrumbs"><a href="/">Home</a><span>/</span><span>Settings</span></nav>
+        <h1>Settings</h1>
+        <p class="subtitle">Local defaults for new browser sessions.</p>
+        ${notice}
+        ${error}
+        <form class="settings-card" method="post" action="/settings">
+          <div class="setting-row">
+            <div>
+              <p class="setting-title">Start new sessions in Suggesting mode</p>
+              <p class="setting-copy">When enabled, newly opened editor sessions turn direct typing into reviewable suggestions by default. Existing open tabs keep their current mode until reloaded.</p>
+            </div>
+            <label class="switch" aria-label="Start new sessions in Suggesting mode">
+              <input type="checkbox" name="suggestionsDefaultEnabled" value="1"${checked} />
+              <span class="switch-track" aria-hidden="true"></span>
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit">Save settings</button>
+          </div>
+        </form>
+      </main>
+    </div>
+  </body>
+</html>`;
+}
+
 function getDashboardView(folderId: string | null, query: Request['query'] = {}): DashboardView {
   const currentFolder = folderId ? (getLocalDashboardFolder(folderId) ?? null) : null;
   const currentFolderId = currentFolder?.id ?? null;
@@ -1190,6 +1449,21 @@ dashboardRoutes.get('/', (req, res) => {
 
 dashboardRoutes.get('/agent-help', (req, res) => {
   res.type('html').send(renderAgentHelpHtml(req));
+});
+
+dashboardRoutes.get('/settings', (req, res) => {
+  res.type('html').send(renderSettingsHtml(getLocalEditorSettings(), req.query));
+});
+
+dashboardRoutes.post('/settings', (req, res) => {
+  try {
+    updateLocalEditorSettings({
+      suggestionsDefaultEnabled: getBodyString(req, 'suggestionsDefaultEnabled') === '1',
+    });
+    res.redirect(303, '/settings?notice=Settings%20saved');
+  } catch (error) {
+    res.redirect(303, `/settings?error=${encodeURIComponent(error instanceof Error ? error.message : 'Settings could not be saved')}`);
+  }
 });
 
 dashboardRoutes.get('/folders/:folderId', (req, res) => {

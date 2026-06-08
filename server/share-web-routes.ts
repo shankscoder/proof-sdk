@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import {
   noteDocumentLiveCollabLease,
   canMutateByOwnerIdentity,
+  getLocalEditorSettings,
   resolveDocumentAccessRole,
   upsertActiveCollabConnection,
 } from './db.js';
@@ -167,10 +168,12 @@ function buildLiveViewerLeaseConnectionId(
 
 function buildShareRuntimeConfigScript(slug: string, shareToken?: string | null): string {
   const commentUiDefaultMode = normalizeCommentUiMode(process.env.PROOF_COMMENT_UI_DEFAULT_MODE);
+  const editorSettings = getLocalEditorSettings();
   const configLines = [
     shareToken ? `window.__PROOF_CONFIG__.shareSlug = ${JSON.stringify(slug)};` : '',
     shareToken ? `window.__PROOF_CONFIG__.shareToken = ${JSON.stringify(shareToken)};` : '',
     commentUiDefaultMode ? `window.__PROOF_CONFIG__.commentUiDefaultMode = ${JSON.stringify(commentUiDefaultMode)};` : '',
+    `window.__PROOF_CONFIG__.suggestionsDefaultEnabled = ${JSON.stringify(editorSettings.suggestionsDefaultEnabled)};`,
   ].filter(Boolean);
   if (configLines.length === 0) return '';
   return `<script>

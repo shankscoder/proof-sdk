@@ -1129,7 +1129,7 @@ class ProofEditorImpl implements ProofEditor {
 
   constructor() {
     const proofConfig = (window as Window & {
-      __PROOF_CONFIG__?: { windowId?: string; documentId?: string };
+      __PROOF_CONFIG__?: { windowId?: string; documentId?: string; suggestionsDefaultEnabled?: boolean };
     }).__PROOF_CONFIG__ ?? {};
 
     if (!proofConfig.windowId) {
@@ -1139,7 +1139,9 @@ class ProofEditorImpl implements ProofEditor {
       proofConfig.documentId = document.location.pathname || 'unknown';
     }
 
-    (window as Window & { __PROOF_CONFIG__?: { windowId?: string; documentId?: string } }).__PROOF_CONFIG__ = proofConfig;
+    (window as Window & {
+      __PROOF_CONFIG__?: { windowId?: string; documentId?: string; suggestionsDefaultEnabled?: boolean };
+    }).__PROOF_CONFIG__ = proofConfig;
 
     const windowId = proofConfig.windowId;
     const documentId = proofConfig.documentId;
@@ -1263,6 +1265,7 @@ class ProofEditorImpl implements ProofEditor {
     // This uses dispatchTransaction decorator to intercept edits BEFORE they're applied,
     // which is necessary for proper deletion tracking (converting deletes to deletion marks).
     this.setupSuggestionsInterceptor();
+    this.applyDefaultSuggestionsMode();
 
     // Initialize agent integration for @proof mentions
     this.initAgentIntegration();
@@ -5368,6 +5371,20 @@ class ProofEditorImpl implements ProofEditor {
       };
 
       console.log('[setupSuggestionsInterceptor] Suggestions interceptor installed');
+    });
+  }
+
+  private applyDefaultSuggestionsMode(): void {
+    const proofConfig = (window as Window & {
+      __PROOF_CONFIG__?: { suggestionsDefaultEnabled?: boolean };
+    }).__PROOF_CONFIG__;
+    if (proofConfig?.suggestionsDefaultEnabled !== true) return;
+    if (!this.editor) return;
+
+    this.editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      enableSuggestions(view);
+      console.log('[suggestions] Default Suggestions mode enabled for this session');
     });
   }
 

@@ -28,6 +28,7 @@ const ACTIVE_COLLAB_CONNECTIONS_TABLE = 'active_collab_connections';
 const LOCAL_DASHBOARD_FOLDERS_TABLE = 'local_dashboard_folders';
 const LOCAL_DASHBOARD_DOCUMENT_LOCATIONS_TABLE = 'local_dashboard_document_locations';
 const DOCUMENT_PARTICIPANTS_TABLE = 'document_participants';
+const LOCAL_EDITOR_DEFAULT_SUGGESTIONS_METADATA_KEY = 'local.editor.default_suggestions';
 const MARK_TOMBSTONE_RETENTION_DAYS = 35;
 const MUTATION_IDEMPOTENCY_BACKFILL_CURSOR_KEY = 'backfill.mutation_idempotency.last_rowid';
 const MUTATION_OUTBOX_BACKFILL_CURSOR_KEY = 'backfill.mutation_outbox.last_event_id';
@@ -483,6 +484,10 @@ export interface ActiveCollabConnectionInput {
   observedAt?: string;
 }
 
+export type LocalEditorSettings = {
+  suggestionsDefaultEnabled: boolean;
+};
+
 export function getDb(): Database.Database {
   if (!db) {
     const dbPath = process.env.DATABASE_PATH || path.join(__dirname, '..', 'proof-share.db');
@@ -537,6 +542,37 @@ export function clearPersistedGlobalCollabAdmissionGuard(): void {
     DELETE FROM ${DB_METADATA_TABLE}
     WHERE key = ?
   `).run(GLOBAL_COLLAB_ADMISSION_GUARD_METADATA_KEY);
+}
+
+function parseMetadataBoolean(value: string | null, fallback: boolean = false): boolean {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;
+  return fallback;
+}
+
+export function getLocalEditorSettings(): LocalEditorSettings {
+  const d = getDb();
+  createMetadataTableIfNeeded(d);
+  return {
+    suggestionsDefaultEnabled: parseMetadataBoolean(
+      readMetadataValue(d, LOCAL_EDITOR_DEFAULT_SUGGESTIONS_METADATA_KEY),
+      false,
+    ),
+  };
+}
+
+export function updateLocalEditorSettings(settings: LocalEditorSettings): LocalEditorSettings {
+  assertWritesAllowed('updateLocalEditorSettings');
+  const d = getDb();
+  createMetadataTableIfNeeded(d);
+  writeMetadataValue(
+    d,
+    LOCAL_EDITOR_DEFAULT_SUGGESTIONS_METADATA_KEY,
+    settings.suggestionsDefaultEnabled ? 'true' : 'false',
+  );
+  return getLocalEditorSettings();
 }
 
 function hashSecret(value: string): string {
