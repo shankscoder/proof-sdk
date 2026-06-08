@@ -46,6 +46,7 @@ async function main(): Promise<void> {
   const allowedCorsOrigins = parseAllowedCorsOrigins();
 
   app.use(express.json({ limit: '10mb' }));
+  app.use(express.static(path.join(__dirname, '..', 'dist'), { index: false }));
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   app.use((req, res, next) => {
