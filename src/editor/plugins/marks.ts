@@ -333,13 +333,17 @@ function rangeHasContext(
 
   if (contextBefore) {
     const before = text.slice(0, startOffset);
-    if (!before.includes(contextBefore) && !stripMarkdownAnchorSyntax(before).includes(stripMarkdownAnchorSyntax(contextBefore))) {
+    const strippedBefore = stripMarkdownAnchorSyntax(before).trimEnd();
+    const strippedContextBefore = stripMarkdownAnchorSyntax(contextBefore).trim();
+    if (!before.trimEnd().endsWith(contextBefore) && !strippedBefore.endsWith(strippedContextBefore)) {
       return false;
     }
   }
   if (contextAfter) {
     const after = text.slice(endOffset);
-    if (!after.includes(contextAfter) && !stripMarkdownAnchorSyntax(after).includes(stripMarkdownAnchorSyntax(contextAfter))) {
+    const strippedAfter = stripMarkdownAnchorSyntax(after).trimStart();
+    const strippedContextAfter = stripMarkdownAnchorSyntax(contextAfter).trim();
+    if (!after.trimStart().startsWith(contextAfter) && !strippedAfter.startsWith(strippedContextAfter)) {
       return false;
     }
   }
@@ -1753,7 +1757,11 @@ export function setMarkMetadata(view: EditorView, metadata: Record<string, Store
 export function applyRemoteMarks(
   view: EditorView,
   metadata: Record<string, StoredMark>,
-  options?: { hydrateAnchors?: boolean; pruneUnresolvedNonCommentMarks?: boolean }
+  options?: {
+    hydrateAnchors?: boolean;
+    pruneUnresolvedNonCommentMarks?: boolean;
+    suppressUnresolvedMarkWarnings?: boolean;
+  }
 ): Record<string, StoredMark> {
   const canonicalMetadata = canonicalizeStoredMarks(metadata);
   const hydrateAnchors = options?.hydrateAnchors !== false;
@@ -1823,6 +1831,10 @@ export function applyRemoteMarks(
           if (stored.kind !== 'comment') {
             delete merged[id];
           }
+          clearMarkAnchorHydrationFailure(id);
+          continue;
+        }
+        if (options?.suppressUnresolvedMarkWarnings) {
           clearMarkAnchorHydrationFailure(id);
           continue;
         }

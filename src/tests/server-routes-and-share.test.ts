@@ -595,23 +595,27 @@ async function runServerSourceTests(): Promise<void> {
     );
     assertIncludes(
       applyCollabMarksBlock,
-      'const appliedMetadata = this.applyExternalMarks(this.lastReceivedServerMarks);',
-      'collab mark application should capture pruned metadata from applyExternalMarks',
+      'this.applyExternalMarks(this.lastReceivedServerMarks);',
+      'collab mark application should apply server marks without creating a collab writeback loop',
     );
-    assertIncludes(
-      applyCollabMarksBlock,
-      'collabClient.setMarksMetadata(appliedMetadata);',
-      'collab mark application should write pruned metadata back to the live marks map',
+    assert(
+      !applyCollabMarksBlock.includes('collabClient.setMarksMetadata'),
+      'collab mark application should not echo applied remote metadata back into the live marks map',
     );
     const applyExternalMarksBlock = sliceBetween(
       editorSource,
-      '  applyExternalMarks(marks: Record<string, StoredMark>):',
+      '  applyExternalMarks(',
       '\n  private applyLatestCollabMarksToEditor',
     );
     assertIncludes(
       applyExternalMarksBlock,
-      'pruneUnresolvedNonCommentMarks: this.isShareMode || this.collabEnabled',
-      'share/collab remote mark application should prune stale unresolved non-comment metadata',
+      'suppressUnresolvedMarkWarnings: this.isShareMode || this.collabEnabled',
+      'share/collab remote mark application should keep stale unresolved metadata quiet',
+    );
+    assertIncludes(
+      editorSource,
+      'pruneUnresolvedNonCommentMarks: true',
+      'initial share load should be allowed to prune stale unresolved non-comment metadata',
     );
   });
 

@@ -1582,7 +1582,9 @@ class ProofEditorImpl implements ProofEditor {
           this.loadDocument(contentWithMarks);
           let appliedInitialMarks: Record<string, StoredMark> | null = null;
           if (doc.marks && Object.keys(doc.marks).length > 0) {
-            appliedInitialMarks = this.applyExternalMarks(doc.marks as Record<string, StoredMark>);
+            appliedInitialMarks = this.applyExternalMarks(doc.marks as Record<string, StoredMark>, {
+              pruneUnresolvedNonCommentMarks: true,
+            });
           }
           const sourceInitialMarks = appliedInitialMarks ?? (doc.marks as Record<string, StoredMark>);
           const initialMarks = doc.marks ? { ...sourceInitialMarks } : {};
@@ -4927,7 +4929,10 @@ class ProofEditorImpl implements ProofEditor {
     this.scheduleBannerLayoutUpdate();
   }
 
-  applyExternalMarks(marks: Record<string, StoredMark>): Record<string, StoredMark> | null {
+  applyExternalMarks(
+    marks: Record<string, StoredMark>,
+    options?: { pruneUnresolvedNonCommentMarks?: boolean }
+  ): Record<string, StoredMark> | null {
     if (!this.editor) return null;
 
     let appliedMetadata: Record<string, StoredMark> | null = null;
@@ -4937,7 +4942,8 @@ class ProofEditorImpl implements ProofEditor {
       // (using the `quote` field) and merge metadata for existing marks.
       appliedMetadata = applyRemoteMarks(view, marks, {
         hydrateAnchors: this.collabCanEdit,
-        pruneUnresolvedNonCommentMarks: this.isShareMode || this.collabEnabled,
+        pruneUnresolvedNonCommentMarks: options?.pruneUnresolvedNonCommentMarks === true,
+        suppressUnresolvedMarkWarnings: this.isShareMode || this.collabEnabled,
       });
     });
     return appliedMetadata;
@@ -4959,13 +4965,7 @@ class ProofEditorImpl implements ProofEditor {
     this.applyingCollabRemote = true;
     this.suppressMarksSync = true;
     try {
-      const appliedMetadata = this.applyExternalMarks(this.lastReceivedServerMarks);
-      if (appliedMetadata) {
-        this.lastReceivedServerMarks = { ...appliedMetadata };
-        if (this.collabCanEdit) {
-          collabClient.setMarksMetadata(appliedMetadata);
-        }
-      }
+      this.applyExternalMarks(this.lastReceivedServerMarks);
     } finally {
       this.suppressMarksSync = false;
       this.applyingCollabRemote = false;
