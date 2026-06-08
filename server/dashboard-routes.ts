@@ -178,9 +178,9 @@ function renderFolderSelect(
 
 function renderBreadcrumbs(breadcrumbs: LocalDashboardFolderRow[], isTrash: boolean | undefined): string {
   if (isTrash) {
-    return '<nav class="breadcrumbs"><a href="/">Documents</a><span>/</span><span>Trash</span></nav>';
+    return '<nav class="breadcrumbs"><a href="/">Home</a><span>/</span><span>Trash</span></nav>';
   }
-  const links = ['<a href="/">Documents</a>'];
+  const links = ['<a href="/">Home</a>'];
   for (const folder of breadcrumbs) {
     links.push('<span>/</span>');
     links.push(`<a href="${folderHref(folder.id)}">${escapeHtml(folder.name)}</a>`);
@@ -188,7 +188,7 @@ function renderBreadcrumbs(breadcrumbs: LocalDashboardFolderRow[], isTrash: bool
   return `<nav class="breadcrumbs">${links.join('')}</nav>`;
 }
 
-function renderFolderTree(folders: LocalDashboardFolderRow[], currentFolderId: string | null): string {
+function renderFolderTree(folders: LocalDashboardFolderRow[], currentFolderId: string | null, isTrash: boolean): string {
   const childrenByParent = new Map<string, LocalDashboardFolderRow[]>();
   for (const folder of folders) {
     const key = folder.parent_id ?? '';
@@ -214,18 +214,25 @@ function renderFolderTree(folders: LocalDashboardFolderRow[], currentFolderId: s
     return `<ul class="tree-list${depth > 0 ? ' nested' : ''}">${rows}</ul>`;
   };
 
-  return renderBranch(null, 0) || '<p class="sidebar-empty">No folders yet</p>';
+  const homeActive = !isTrash && !currentFolderId;
+  return `<ul class="tree-list">
+    <li>
+      <a class="tree-link${homeActive ? ' active' : ''}" href="/" style="--depth: 0;"${homeActive ? ' aria-current="page"' : ''}>
+        <span class="tree-icon" aria-hidden="true"></span>
+        <span class="tree-name">Home</span>
+      </a>
+      ${renderBranch(null, 1)}
+    </li>
+  </ul>`;
 }
 
 function renderSidebar(view: DashboardView, currentFolderId: string | null): string {
-  const homeActive = !view.isTrash && !currentFolderId;
   const trashActive = view.isTrash === true;
   return `<aside class="sidebar">
     <a class="sidebar-brand" href="/">Proof</a>
     <nav class="sidebar-nav" aria-label="Folder navigation">
-      <a class="nav-link${homeActive ? ' active' : ''}" href="/"${homeActive ? ' aria-current="page"' : ''}>Home</a>
       <div class="nav-section-label">Folders</div>
-      ${renderFolderTree(view.folderOptions, currentFolderId)}
+      ${renderFolderTree(view.folderOptions, currentFolderId, view.isTrash === true)}
       <div class="nav-section-label">Trash</div>
       <a class="nav-link${trashActive ? ' active' : ''}" href="/trash"${trashActive ? ' aria-current="page"' : ''}>Trash${view.trashCount > 0 ? ` (${view.trashCount})` : ''}</a>
     </nav>
@@ -303,10 +310,11 @@ function renderDashboardContent(view: DashboardView, returnTo: string): string {
 export function renderDashboardHtml(view: DashboardView): string {
   const currentFolderId = view.currentFolder?.id ?? null;
   const currentPath = view.isTrash ? '/trash' : folderHref(currentFolderId);
-  const title = view.isTrash ? 'Trash' : (view.currentFolder?.name ?? 'Documents');
+  const title = view.isTrash ? 'Trash' : (view.currentFolder?.name ?? 'Home');
+  const documentLabel = `${view.documents.length} document${view.documents.length === 1 ? '' : 's'}`;
   const subtitle = view.isTrash
     ? `${view.documents.length} deleted locally`
-    : `${view.documents.length} document${view.documents.length === 1 ? '' : 's'} in this folder`;
+    : `${documentLabel} in ${title}`;
   const notice = view.notice ? `<p class="notice">${escapeHtml(view.notice)}</p>` : '';
   const error = view.error ? `<p class="notice error">${escapeHtml(view.error)}</p>` : '';
 
