@@ -49,11 +49,20 @@ npm run serve
 
 The default setup serves the editor on `http://localhost:3000` and the API/server on `http://localhost:4000`.
 
+In the built/server runtime, the server also owns the local document dashboard:
+
+- `GET /` lists saved local documents from SQLite
+- `GET /new` creates a new document and redirects to `/d/:slug?token=...`
+- `GET /d/:slug` opens an existing document editor route
+
 ## Core Routes
 
 Canonical Proof SDK routes:
 
+- `GET /`
+- `GET /new`
 - `POST /documents`
+- `GET /documents`
 - `GET /documents/:slug/state`
 - `GET /documents/:slug/snapshot`
 - `POST /documents/:slug/edit`

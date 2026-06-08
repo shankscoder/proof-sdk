@@ -30,6 +30,7 @@ import {
   getDocument,
   getDocumentBySlug,
   getStoredIdempotencyRecord,
+  listLocalDashboardDocuments,
   pauseDocument,
   resolveDocumentAccess,
   resolveDocumentAccessRole,
@@ -884,6 +885,22 @@ apiRoutes.post('/documents', (req: Request, res: Response) => {
     ...(legacyCreateMode === 'warn'
       ? { deprecation: buildLegacyCreateDeprecationPayload(legacyCreateMode) }
       : {}),
+  });
+});
+
+apiRoutes.get('/documents', (_req: Request, res: Response) => {
+  const documents = listLocalDashboardDocuments(200).map((doc) => ({
+    slug: doc.slug,
+    title: doc.title,
+    shareState: doc.share_state,
+    createdAt: doc.created_at,
+    updatedAt: doc.updated_at,
+    preview: doc.preview ?? null,
+    url: `/d/${encodeURIComponent(doc.slug)}`,
+  }));
+  res.json({
+    success: true,
+    documents,
   });
 });
 

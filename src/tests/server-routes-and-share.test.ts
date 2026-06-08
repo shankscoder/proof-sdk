@@ -248,9 +248,11 @@ async function withEphemeralApiServer(run: (baseUrl: string) => Promise<void>): 
   const { createBridgeMountRouter } = await import('../../server/bridge.ts');
   const { discoveryRoutes } = await import('../../server/discovery-routes.ts');
   const { shareWebRoutes } = await import('../../server/share-web-routes.ts');
+  const { dashboardRoutes } = await import('../../server/dashboard-routes.ts');
   const { enforceApiClientCompatibility } = await import('../../server/client-capabilities.ts');
   const app = express();
   app.use(express.json({ limit: '10mb' }));
+  app.use(dashboardRoutes);
   app.use(discoveryRoutes);
   app.use('/api', enforceApiClientCompatibility, apiRoutes);
   app.use('/api/agent', agentRoutes);
@@ -371,6 +373,14 @@ async function runServerSourceTests(): Promise<void> {
       serverSource,
       'app.use(discoveryRoutes);',
       'server source should mount discovery metadata routes',
+    );
+  });
+
+  await test('D1: server source mounts local dashboard routes', async () => {
+    assertIncludes(
+      serverSource,
+      'app.use(dashboardRoutes);',
+      'server source should mount local dashboard routes',
     );
   });
 
@@ -565,6 +575,39 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       assert(typeof payload._links?.view === 'string', 'Expected view link');
       assert(typeof payload._links?.edit?.href === 'string' && payload._links.edit.href.includes('/documents/'), 'Expected canonical edit link');
       assert(typeof payload.agent?.bridgeApi?.comments === 'string' && payload.agent.bridgeApi.comments.includes('/documents/'), 'Expected bridge comments route');
+    });
+
+    await test('D2: GET /documents lists local dashboard documents', async () => {
+      const listResponse = await get(baseUrl, '/documents', { Accept: 'application/json' });
+      assert(listResponse.status === 200, `Expected status 200, got ${listResponse.status}`);
+      const payload = await listResponse.json();
+      assert(Array.isArray(payload.documents), 'Expected documents array');
+      const listed = payload.documents.find((doc: Record<string, unknown>) => doc.title === 'Neutral create');
+      assert(listed, 'Expected created document in local list');
+      assert(typeof listed.url === 'string' && String(listed.url).startsWith('/d/'), 'Expected clean document URL');
+      assert(!String(listed.url).includes('token='), 'Expected local list URL without token');
+    });
+
+    await test('D2: dashboard root lists local documents and New action', async () => {
+      const response = await get(baseUrl, '/', { Accept: 'text/html' });
+      assert(response.status === 200, `Expected status 200, got ${response.status}`);
+      assertIncludes(response.body, '<h1>Documents</h1>', 'Expected dashboard heading');
+      assertIncludes(response.body, 'Neutral create', 'Expected dashboard to include local document title');
+      assertIncludes(response.body, 'href="/new"', 'Expected dashboard New action');
+      assertIncludes(response.body, 'href="/d/', 'Expected dashboard document link');
+    });
+
+    await test('D2: /new creates a document and redirects to a tokenized document URL', async () => {
+      const response = await getManualRedirect(baseUrl, '/new', { Accept: 'text/html' });
+      assert(response.status === 302, `Expected redirect status 302, got ${response.status}`);
+      const location = response.headers.get('location') || '';
+      assert(location.includes('/d/'), `Expected document redirect, got ${location}`);
+      assert(location.includes('token='), `Expected tokenized redirect, got ${location}`);
+      const slugMatch = location.match(/\/d\/([^?]+)/);
+      assert(Boolean(slugMatch?.[1]), `Expected slug in redirect, got ${location}`);
+      const slugFromRedirect = decodeURIComponent(slugMatch?.[1] ?? '');
+      const doc = db.getDocumentBySlug(slugFromRedirect);
+      assert(doc?.title === 'Untitled', `Expected created Untitled doc, got ${String(doc?.title)}`);
     });
 
     await test('D2: POST /api/documents in warn mode returns deprecation headers + metadata', async () => {

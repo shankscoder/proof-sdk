@@ -3748,6 +3748,28 @@ export interface DashboardDocumentRow {
   last_visited_at?: string;
   is_owned?: number;
   copy_url?: string;
+  preview?: string | null;
+}
+
+export function listLocalDashboardDocuments(limit: number = 100): DashboardDocumentRow[] {
+  const parsedLimit = Number.isFinite(limit) ? Math.trunc(limit) : 100;
+  const safeLimit = Math.max(1, Math.min(parsedLimit, 500));
+  return getDb().prepare(`
+    SELECT
+      d.slug,
+      d.title,
+      d.share_state,
+      d.updated_at,
+      d.created_at,
+      COALESCE(NULLIF(TRIM(p.plain_text), ''), d.markdown) AS preview
+    FROM documents d
+    LEFT JOIN document_projections p
+      ON p.document_slug = d.slug
+    WHERE d.deleted_at IS NULL
+      AND d.share_state != 'DELETED'
+    ORDER BY d.updated_at DESC, d.created_at DESC, d.slug ASC
+    LIMIT ?
+  `).all(safeLimit) as DashboardDocumentRow[];
 }
 
 export function listUserOwnedDocuments(everyUserId: number, limit: number = 50): DashboardDocumentRow[] {
