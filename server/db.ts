@@ -25,6 +25,9 @@ const MUTATION_IDEMPOTENCY_TABLE = 'mutation_idempotency';
 const MUTATION_OUTBOX_TABLE = 'mutation_outbox';
 const MARK_TOMBSTONES_TABLE = 'mark_tombstones';
 const ACTIVE_COLLAB_CONNECTIONS_TABLE = 'active_collab_connections';
+const LOCAL_DASHBOARD_FOLDERS_TABLE = 'local_dashboard_folders';
+const LOCAL_DASHBOARD_DOCUMENT_LOCATIONS_TABLE = 'local_dashboard_document_locations';
+const DOCUMENT_PARTICIPANTS_TABLE = 'document_participants';
 const MARK_TOMBSTONE_RETENTION_DAYS = 35;
 const MUTATION_IDEMPOTENCY_BACKFILL_CURSOR_KEY = 'backfill.mutation_idempotency.last_rowid';
 const MUTATION_OUTBOX_BACKFILL_CURSOR_KEY = 'backfill.mutation_outbox.last_event_id';
@@ -1324,6 +1327,57 @@ function initDatabase(): void {
   `);
   d.exec('CREATE INDEX IF NOT EXISTS idx_udv_user_last ON user_document_visits(every_user_id, last_visited_at)');
   d.exec('CREATE INDEX IF NOT EXISTS idx_udv_document_slug ON user_document_visits(document_slug)');
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS ${LOCAL_DASHBOARD_FOLDERS_TABLE} (
+      id TEXT PRIMARY KEY,
+      parent_id TEXT,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT,
+      FOREIGN KEY (parent_id) REFERENCES ${LOCAL_DASHBOARD_FOLDERS_TABLE}(id)
+    )
+  `);
+  d.exec(`
+    CREATE INDEX IF NOT EXISTS idx_local_dashboard_folders_parent
+    ON ${LOCAL_DASHBOARD_FOLDERS_TABLE}(parent_id, deleted_at, name)
+  `);
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS ${LOCAL_DASHBOARD_DOCUMENT_LOCATIONS_TABLE} (
+      document_slug TEXT PRIMARY KEY,
+      folder_id TEXT,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (document_slug) REFERENCES documents(slug),
+      FOREIGN KEY (folder_id) REFERENCES ${LOCAL_DASHBOARD_FOLDERS_TABLE}(id)
+    )
+  `);
+  d.exec(`
+    CREATE INDEX IF NOT EXISTS idx_local_dashboard_document_locations_folder
+    ON ${LOCAL_DASHBOARD_DOCUMENT_LOCATIONS_TABLE}(folder_id, updated_at)
+  `);
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS ${DOCUMENT_PARTICIPANTS_TABLE} (
+      document_slug TEXT NOT NULL,
+      participant_key TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      color TEXT,
+      avatar TEXT,
+      status TEXT,
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      disconnected_at TEXT,
+      PRIMARY KEY (document_slug, participant_key),
+      FOREIGN KEY (document_slug) REFERENCES documents(slug)
+    )
+  `);
+  d.exec(`
+    CREATE INDEX IF NOT EXISTS idx_document_participants_slug_seen
+    ON ${DOCUMENT_PARTICIPANTS_TABLE}(document_slug, last_seen_at)
+  `);
 
   d.exec(`
     CREATE TABLE IF NOT EXISTS library_documents (
@@ -3739,6 +3793,28 @@ export function listDocumentVisitUserIds(slug: string, limit: number = 200): num
   return rows.map((row) => row.every_user_id);
 }
 
+export interface LocalDashboardFolderRow {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface DashboardParticipantRow {
+  document_slug: string;
+  participant_key: string;
+  kind: 'human' | 'agent';
+  name: string;
+  color: string | null;
+  avatar: string | null;
+  status: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  disconnected_at: string | null;
+}
+
 export interface DashboardDocumentRow {
   slug: string;
   title: string | null;
@@ -3749,27 +3825,330 @@ export interface DashboardDocumentRow {
   is_owned?: number;
   copy_url?: string;
   preview?: string | null;
+  folder_id?: string | null;
+  folder_name?: string | null;
+  participants?: DashboardParticipantRow[];
 }
 
-export function listLocalDashboardDocuments(limit: number = 100): DashboardDocumentRow[] {
-  const parsedLimit = Number.isFinite(limit) ? Math.trunc(limit) : 100;
+type DashboardDocumentListOptions = {
+  folderId?: string | null;
+  limit?: number;
+  onlyDeleted?: boolean;
+};
+
+function clampDashboardLimit(limit: number | undefined, fallback: number = 100): number {
+  const parsedLimit = Number.isFinite(limit) ? Math.trunc(limit as number) : fallback;
   const safeLimit = Math.max(1, Math.min(parsedLimit, 500));
+  return safeLimit;
+}
+
+function normalizeLocalDashboardFolderName(name: string): string {
+  return name.replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function normalizeOptionalFolderId(folderId: string | null | undefined): string | null {
+  if (typeof folderId !== 'string') return null;
+  const normalized = folderId.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function getLocalDashboardFolder(folderId: string | null | undefined): LocalDashboardFolderRow | undefined {
+  const normalized = normalizeOptionalFolderId(folderId);
+  if (!normalized) return undefined;
   return getDb().prepare(`
+    SELECT id, parent_id, name, created_at, updated_at, deleted_at
+    FROM ${LOCAL_DASHBOARD_FOLDERS_TABLE}
+    WHERE id = ?
+    LIMIT 1
+  `).get(normalized) as LocalDashboardFolderRow | undefined;
+}
+
+export function listLocalDashboardFolders(parentId: string | null = null): LocalDashboardFolderRow[] {
+  const normalizedParentId = normalizeOptionalFolderId(parentId);
+  if (normalizedParentId) {
+    return getDb().prepare(`
+      SELECT id, parent_id, name, created_at, updated_at, deleted_at
+      FROM ${LOCAL_DASHBOARD_FOLDERS_TABLE}
+      WHERE parent_id = ?
+        AND deleted_at IS NULL
+      ORDER BY lower(name), created_at, id
+    `).all(normalizedParentId) as LocalDashboardFolderRow[];
+  }
+  return getDb().prepare(`
+    SELECT id, parent_id, name, created_at, updated_at, deleted_at
+    FROM ${LOCAL_DASHBOARD_FOLDERS_TABLE}
+    WHERE parent_id IS NULL
+      AND deleted_at IS NULL
+    ORDER BY lower(name), created_at, id
+  `).all() as LocalDashboardFolderRow[];
+}
+
+export function listLocalDashboardFolderOptions(): LocalDashboardFolderRow[] {
+  return getDb().prepare(`
+    SELECT id, parent_id, name, created_at, updated_at, deleted_at
+    FROM ${LOCAL_DASHBOARD_FOLDERS_TABLE}
+    WHERE deleted_at IS NULL
+    ORDER BY lower(name), created_at, id
+  `).all() as LocalDashboardFolderRow[];
+}
+
+export function getLocalDashboardFolderBreadcrumbs(folderId: string | null | undefined): LocalDashboardFolderRow[] {
+  const breadcrumbs: LocalDashboardFolderRow[] = [];
+  let currentId = normalizeOptionalFolderId(folderId);
+  const seen = new Set<string>();
+  while (currentId && !seen.has(currentId)) {
+    seen.add(currentId);
+    const folder = getLocalDashboardFolder(currentId);
+    if (!folder || folder.deleted_at) break;
+    breadcrumbs.unshift(folder);
+    currentId = folder.parent_id;
+  }
+  return breadcrumbs;
+}
+
+export function createLocalDashboardFolder(name: string, parentId: string | null = null): LocalDashboardFolderRow {
+  assertWritesAllowed('createLocalDashboardFolder');
+  const normalizedName = normalizeLocalDashboardFolderName(name);
+  if (!normalizedName) {
+    throw new Error('Folder name is required');
+  }
+  const normalizedParentId = normalizeOptionalFolderId(parentId);
+  if (normalizedParentId) {
+    const parent = getLocalDashboardFolder(normalizedParentId);
+    if (!parent || parent.deleted_at) {
+      throw new Error('Parent folder not found');
+    }
+  }
+  const now = new Date().toISOString();
+  const folder: LocalDashboardFolderRow = {
+    id: randomUUID(),
+    parent_id: normalizedParentId,
+    name: normalizedName,
+    created_at: now,
+    updated_at: now,
+    deleted_at: null,
+  };
+  getDb().prepare(`
+    INSERT INTO ${LOCAL_DASHBOARD_FOLDERS_TABLE} (id, parent_id, name, created_at, updated_at, deleted_at)
+    VALUES (?, ?, ?, ?, ?, NULL)
+  `).run(folder.id, folder.parent_id, folder.name, folder.created_at, folder.updated_at);
+  return folder;
+}
+
+export function renameLocalDashboardFolder(folderId: string, name: string): boolean {
+  assertWritesAllowed('renameLocalDashboardFolder');
+  const normalizedName = normalizeLocalDashboardFolderName(name);
+  if (!normalizedName) throw new Error('Folder name is required');
+  const now = new Date().toISOString();
+  const result = getDb().prepare(`
+    UPDATE ${LOCAL_DASHBOARD_FOLDERS_TABLE}
+    SET name = ?, updated_at = ?
+    WHERE id = ?
+      AND deleted_at IS NULL
+  `).run(normalizedName, now, folderId);
+  return result.changes > 0;
+}
+
+function isLocalDashboardFolderDescendant(folderId: string, candidateParentId: string): boolean {
+  let currentId: string | null = candidateParentId;
+  const seen = new Set<string>();
+  while (currentId && !seen.has(currentId)) {
+    if (currentId === folderId) return true;
+    seen.add(currentId);
+    const folder = getLocalDashboardFolder(currentId);
+    currentId = folder?.parent_id ?? null;
+  }
+  return false;
+}
+
+export function moveLocalDashboardFolder(folderId: string, parentId: string | null): boolean {
+  assertWritesAllowed('moveLocalDashboardFolder');
+  const folder = getLocalDashboardFolder(folderId);
+  if (!folder || folder.deleted_at) throw new Error('Folder not found');
+  const normalizedParentId = normalizeOptionalFolderId(parentId);
+  if (normalizedParentId) {
+    const parent = getLocalDashboardFolder(normalizedParentId);
+    if (!parent || parent.deleted_at) throw new Error('Parent folder not found');
+    if (normalizedParentId === folderId || isLocalDashboardFolderDescendant(folderId, normalizedParentId)) {
+      throw new Error('Cannot move a folder into itself or one of its children');
+    }
+  }
+  const now = new Date().toISOString();
+  const result = getDb().prepare(`
+    UPDATE ${LOCAL_DASHBOARD_FOLDERS_TABLE}
+    SET parent_id = ?, updated_at = ?
+    WHERE id = ?
+      AND deleted_at IS NULL
+  `).run(normalizedParentId, now, folderId);
+  return result.changes > 0;
+}
+
+export function deleteLocalDashboardFolder(folderId: string): boolean {
+  assertWritesAllowed('deleteLocalDashboardFolder');
+  const folder = getLocalDashboardFolder(folderId);
+  if (!folder || folder.deleted_at) throw new Error('Folder not found');
+  const child = getDb().prepare(`
+    SELECT 1 AS present
+    FROM ${LOCAL_DASHBOARD_FOLDERS_TABLE}
+    WHERE parent_id = ?
+      AND deleted_at IS NULL
+    LIMIT 1
+  `).get(folderId) as { present?: number } | undefined;
+  if (child?.present === 1) throw new Error('Folder must be empty before it can be deleted');
+  const doc = getDb().prepare(`
+    SELECT 1 AS present
+    FROM ${LOCAL_DASHBOARD_DOCUMENT_LOCATIONS_TABLE}
+    WHERE folder_id = ?
+    LIMIT 1
+  `).get(folderId) as { present?: number } | undefined;
+  if (doc?.present === 1) throw new Error('Folder must be empty before it can be deleted');
+  const now = new Date().toISOString();
+  const result = getDb().prepare(`
+    UPDATE ${LOCAL_DASHBOARD_FOLDERS_TABLE}
+    SET deleted_at = ?, updated_at = ?
+    WHERE id = ?
+      AND deleted_at IS NULL
+  `).run(now, now, folderId);
+  return result.changes > 0;
+}
+
+export function moveDocumentToLocalDashboardFolder(slug: string, folderId: string | null): boolean {
+  assertWritesAllowed('moveDocumentToLocalDashboardFolder');
+  const normalizedFolderId = normalizeOptionalFolderId(folderId);
+  if (normalizedFolderId) {
+    const folder = getLocalDashboardFolder(normalizedFolderId);
+    if (!folder || folder.deleted_at) throw new Error('Folder not found');
+  }
+  const doc = getDocumentBySlug(slug);
+  if (!doc) throw new Error('Document not found');
+  const now = new Date().toISOString();
+  getDb().prepare(`
+    INSERT INTO ${LOCAL_DASHBOARD_DOCUMENT_LOCATIONS_TABLE} (document_slug, folder_id, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(document_slug) DO UPDATE SET
+      folder_id = excluded.folder_id,
+      updated_at = excluded.updated_at
+  `).run(slug, normalizedFolderId, now);
+  return true;
+}
+
+export function upsertDocumentParticipant(input: {
+  slug: string;
+  kind: 'human' | 'agent';
+  id?: string | null;
+  name: string;
+  color?: string | null;
+  avatar?: string | null;
+  status?: string | null;
+  disconnected?: boolean;
+  observedAt?: string;
+}): DashboardParticipantRow {
+  assertWritesAllowed('upsertDocumentParticipant');
+  const normalizedName = input.name.replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!normalizedName) throw new Error('Participant name is required');
+  const normalizedId = typeof input.id === 'string' && input.id.trim() ? input.id.trim().slice(0, 160) : normalizedName.toLowerCase();
+  const participantKey = `${input.kind}:${normalizedId}`;
+  const now = input.observedAt ?? new Date().toISOString();
+  const status = typeof input.status === 'string' && input.status.trim() ? input.status.trim().slice(0, 80) : null;
+  const disconnectedAt = input.disconnected ? now : null;
+  getDb().prepare(`
+    INSERT INTO ${DOCUMENT_PARTICIPANTS_TABLE} (
+      document_slug, participant_key, kind, name, color, avatar, status, first_seen_at, last_seen_at, disconnected_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(document_slug, participant_key) DO UPDATE SET
+      name = excluded.name,
+      color = excluded.color,
+      avatar = excluded.avatar,
+      status = excluded.status,
+      last_seen_at = excluded.last_seen_at,
+      disconnected_at = excluded.disconnected_at
+  `).run(
+    input.slug,
+    participantKey,
+    input.kind,
+    normalizedName,
+    input.color ?? null,
+    input.avatar ?? null,
+    status,
+    now,
+    now,
+    disconnectedAt,
+  );
+  return getDb().prepare(`
+    SELECT document_slug, participant_key, kind, name, color, avatar, status, first_seen_at, last_seen_at, disconnected_at
+    FROM ${DOCUMENT_PARTICIPANTS_TABLE}
+    WHERE document_slug = ?
+      AND participant_key = ?
+    LIMIT 1
+  `).get(input.slug, participantKey) as DashboardParticipantRow;
+}
+
+export function listDocumentParticipants(slug: string, limit: number = 6): DashboardParticipantRow[] {
+  const safeLimit = clampDashboardLimit(limit, 6);
+  return getDb().prepare(`
+    SELECT document_slug, participant_key, kind, name, color, avatar, status, first_seen_at, last_seen_at, disconnected_at
+    FROM ${DOCUMENT_PARTICIPANTS_TABLE}
+    WHERE document_slug = ?
+      AND disconnected_at IS NULL
+    ORDER BY last_seen_at DESC, name ASC
+    LIMIT ?
+  `).all(slug, safeLimit) as DashboardParticipantRow[];
+}
+
+function attachDashboardParticipants(rows: DashboardDocumentRow[]): DashboardDocumentRow[] {
+  for (const row of rows) {
+    row.participants = listDocumentParticipants(row.slug, 6);
+  }
+  return rows;
+}
+
+export function listLocalDashboardDocuments(
+  limitOrOptions: number | DashboardDocumentListOptions = 100,
+): DashboardDocumentRow[] {
+  const options: DashboardDocumentListOptions = typeof limitOrOptions === 'number'
+    ? { limit: limitOrOptions }
+    : limitOrOptions;
+  const safeLimit = clampDashboardLimit(options.limit, 100);
+  const folderId = normalizeOptionalFolderId(options.folderId);
+  const onlyDeleted = options.onlyDeleted === true;
+  const deletedPredicate = onlyDeleted
+    ? '(d.deleted_at IS NOT NULL OR d.share_state = \'DELETED\')'
+    : '(d.deleted_at IS NULL AND d.share_state != \'DELETED\')';
+  const folderPredicate = onlyDeleted
+    ? ''
+    : (folderId
+      ? 'AND l.folder_id = ?'
+      : 'AND l.folder_id IS NULL');
+  const params = folderId && !onlyDeleted ? [folderId, safeLimit] : [safeLimit];
+  const rows = getDb().prepare(`
     SELECT
       d.slug,
       d.title,
       d.share_state,
       d.updated_at,
       d.created_at,
+      l.folder_id,
+      f.name AS folder_name,
       COALESCE(NULLIF(TRIM(p.plain_text), ''), d.markdown) AS preview
     FROM documents d
     LEFT JOIN document_projections p
       ON p.document_slug = d.slug
-    WHERE d.deleted_at IS NULL
-      AND d.share_state != 'DELETED'
+    LEFT JOIN ${LOCAL_DASHBOARD_DOCUMENT_LOCATIONS_TABLE} l
+      ON l.document_slug = d.slug
+    LEFT JOIN ${LOCAL_DASHBOARD_FOLDERS_TABLE} f
+      ON f.id = l.folder_id
+      AND f.deleted_at IS NULL
+    WHERE ${deletedPredicate}
+      ${folderPredicate}
     ORDER BY d.updated_at DESC, d.created_at DESC, d.slug ASC
     LIMIT ?
-  `).all(safeLimit) as DashboardDocumentRow[];
+  `).all(...params) as DashboardDocumentRow[];
+  return attachDashboardParticipants(rows);
+}
+
+export function listTrashDashboardDocuments(limit: number = 100): DashboardDocumentRow[] {
+  return listLocalDashboardDocuments({ limit, onlyDeleted: true });
 }
 
 export function listUserOwnedDocuments(everyUserId: number, limit: number = 50): DashboardDocumentRow[] {

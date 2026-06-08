@@ -589,6 +589,32 @@ export class ShareClient {
     };
   }
 
+  async updateParticipant(
+    input: { name: string; color?: string; status?: string },
+    options?: { token?: string },
+  ): Promise<{ success: boolean } | ShareRequestError | null> {
+    if (!this.slug) return null;
+    const name = typeof input.name === 'string' ? input.name.trim() : '';
+    if (!name) return null;
+    const response = await fetch(`${this.getApiBase()}/documents/${this.slug}/participants`, {
+      method: 'POST',
+      headers: {
+        ...this.getShareAuthHeaders(options?.token),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        kind: 'human',
+        id: this.clientId || name.toLowerCase(),
+        name,
+        color: input.color,
+        status: input.status || 'viewing',
+      }),
+    });
+    if (!response.ok) return this.parseRequestError(response);
+    const payload = await response.json().catch(() => null) as { success?: boolean } | null;
+    return { success: payload?.success === true };
+  }
+
   async fetchCollabSession(
     options?: { token?: string }
   ): Promise<CollabSessionPayload | CollabUnavailablePayload | ShareRequestError | null> {

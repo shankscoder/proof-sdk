@@ -9,6 +9,7 @@ import {
   listDocumentEvents,
   rebuildDocumentBlocks,
   resolveDocumentAccessRole,
+  upsertDocumentParticipant,
 } from './db.js';
 import {
   activateDurableCollabQuarantine,
@@ -3047,6 +3048,16 @@ agentRoutes.post('/:slug/presence', (req: Request, res: Response) => {
   };
 
   addDocumentEvent(slug, 'agent.presence', entry, agentId);
+  upsertDocumentParticipant({
+    slug,
+    kind: 'agent',
+    id: agentId,
+    name,
+    color,
+    avatar,
+    status: entry.status,
+    observedAt: now,
+  });
 
   const collabApplied = applyAgentPresenceToLoadedCollab(slug, entry, activity);
 
@@ -3125,6 +3136,15 @@ agentRoutes.post('/:slug/presence/disconnect', (req: Request, res: Response) => 
   const collabApplied = removeAgentPresenceFromLoadedCollab(slug, agentId, activity);
   const disconnected = true;
   addDocumentEvent(slug, 'agent.disconnected', activity, actor);
+  upsertDocumentParticipant({
+    slug,
+    kind: 'agent',
+    id: agentId,
+    name: agentId,
+    status: 'disconnected',
+    disconnected: true,
+    observedAt: now,
+  });
   broadcastToRoom(slug, {
     type: 'agent.presence',
     source: 'agent',

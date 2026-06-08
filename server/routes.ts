@@ -42,6 +42,7 @@ import {
   updateDocument,
   updateDocumentTitle,
   updateMarks,
+  upsertDocumentParticipant,
 } from './db.js';
 import { isShareRole, type ShareRole } from './share-types.js';
 import { broadcastToRoom, closeRoom, getActiveCollabClientBreakdown, getRoomSize } from './ws.js';
@@ -896,11 +897,72 @@ apiRoutes.get('/documents', (_req: Request, res: Response) => {
     createdAt: doc.created_at,
     updatedAt: doc.updated_at,
     preview: doc.preview ?? null,
+    folderId: doc.folder_id ?? null,
+    participants: (doc.participants ?? []).map((participant) => ({
+      kind: participant.kind,
+      name: participant.name,
+      status: participant.status,
+      lastSeenAt: participant.last_seen_at,
+    })),
     url: `/d/${encodeURIComponent(doc.slug)}`,
   }));
   res.json({
     success: true,
     documents,
+  });
+});
+
+apiRoutes.post('/documents/:slug/participants', async (req: Request, res: Response) => {
+  const slug = getSlugParam(req);
+  if (!slug) {
+    res.status(400).json({ success: false, error: 'Invalid slug' });
+    return;
+  }
+  const doc = getDocumentBySlug(slug);
+  if (!doc) {
+    res.status(404).json({ success: false, error: 'Document not found' });
+    return;
+  }
+  if (doc.share_state === 'DELETED') {
+    res.status(410).json({ success: false, error: 'Document has been deleted' });
+    return;
+  }
+  const access = await resolveOpenContextAccess(req, res, slug, doc);
+  if (!access) return;
+  const capabilities = deriveShareCapabilities(access.role, doc.share_state);
+  if (!capabilities.canRead) {
+    res.status(403).json({ success: false, error: 'Not authorized to update participant' });
+    return;
+  }
+  const body = isRecord(req.body) ? req.body : {};
+  const rawName = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!rawName) {
+    res.status(400).json({ success: false, error: 'Participant name is required' });
+    return;
+  }
+  const kind = body.kind === 'agent' ? 'agent' : 'human';
+  const id = typeof body.id === 'string' && body.id.trim()
+    ? body.id.trim()
+    : typeof body.participantId === 'string' && body.participantId.trim()
+      ? body.participantId.trim()
+      : null;
+  const participant = upsertDocumentParticipant({
+    slug,
+    kind,
+    id,
+    name: rawName,
+    color: typeof body.color === 'string' ? body.color : null,
+    avatar: typeof body.avatar === 'string' ? body.avatar : null,
+    status: typeof body.status === 'string' ? body.status : null,
+  });
+  res.json({
+    success: true,
+    participant: {
+      kind: participant.kind,
+      name: participant.name,
+      status: participant.status,
+      lastSeenAt: participant.last_seen_at,
+    },
   });
 });
 

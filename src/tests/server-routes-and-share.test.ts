@@ -24,7 +24,7 @@ const CLIENT_HEADERS = {
   'X-Proof-Client-Protocol': '3',
 };
 
-function assert(condition: boolean, message: string): void {
+function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message);
   }
@@ -106,6 +106,30 @@ async function post(base: string, path: string, body?: object, headers: Record<s
         return Promise.reject(new Error(`Response is not JSON: ${bodyText.slice(0, 200)}`));
       }
     },
+  };
+}
+
+async function postFormManual(
+  base: string,
+  path: string,
+  body: Record<string, string>,
+  headers: Record<string, string> = {},
+): Promise<any> {
+  const response = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: {
+      ...CLIENT_HEADERS,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      ...headers,
+    },
+    body: new URLSearchParams(body).toString(),
+    redirect: 'manual',
+  });
+  const bodyText = await response.text();
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: bodyText,
   };
 }
 
@@ -252,6 +276,7 @@ async function withEphemeralApiServer(run: (baseUrl: string) => Promise<void>): 
   const { enforceApiClientCompatibility } = await import('../../server/client-capabilities.ts');
   const app = express();
   app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: false }));
   app.use(dashboardRoutes);
   app.use(discoveryRoutes);
   app.use('/api', enforceApiClientCompatibility, apiRoutes);
@@ -359,6 +384,7 @@ async function withMockOAuth(run: (oauthBaseUrl: string) => Promise<void>): Prom
 async function runServerSourceTests(): Promise<void> {
   const serverSource = readFileSync(path.resolve(process.cwd(), 'server', 'index.ts'), 'utf8');
   const homeTemplate = readFileSync(path.resolve(process.cwd(), 'server', 'resources', 'home.html'), 'utf8');
+  const editorSource = readFileSync(path.resolve(process.cwd(), 'src', 'editor', 'index.ts'), 'utf8');
 
   await test('D1: server source mounts canonical /documents bridge routes', async () => {
     assertIncludes(
@@ -381,6 +407,22 @@ async function runServerSourceTests(): Promise<void> {
       serverSource,
       'app.use(dashboardRoutes);',
       'server source should mount local dashboard routes',
+    );
+  });
+
+  await test('D1: server source parses dashboard form posts', async () => {
+    assertIncludes(
+      serverSource,
+      'app.use(express.urlencoded({ extended: false }));',
+      'server source should parse dashboard URL-encoded form posts',
+    );
+  });
+
+  await test('D1: editor wordmark returns to local dashboard', async () => {
+    assertIncludes(
+      editorSource,
+      "wordmark.href = '/';",
+      'editor toolbar Proof wordmark should link to the local dashboard',
     );
   });
 
@@ -608,6 +650,142 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       const slugFromRedirect = decodeURIComponent(slugMatch?.[1] ?? '');
       const doc = db.getDocumentBySlug(slugFromRedirect);
       assert(doc?.title === 'Untitled', `Expected created Untitled doc, got ${String(doc?.title)}`);
+    });
+
+    await test('D2: dashboard supports nested folders and moving documents', async () => {
+      const createdForFolderResponse = await postNoClientHeaders(baseUrl, '/documents', {
+        markdown: '# Folder Doc\n\nMove me',
+        marks: {},
+        title: 'Folder Doc',
+      });
+      assert(createdForFolderResponse.status === 200, `Expected create status 200, got ${createdForFolderResponse.status}`);
+      const createdForFolder = await createdForFolderResponse.json();
+      const folderDocSlug = String(createdForFolder.slug);
+
+      const rootFolderResponse = await postFormManual(baseUrl, '/dashboard/folders', {
+        name: 'Projects',
+        parentId: '',
+        returnTo: '/',
+      });
+      assert(rootFolderResponse.status === 303, `Expected folder create redirect 303, got ${rootFolderResponse.status}`);
+      const rootFolder = db.listLocalDashboardFolderOptions().find((folder) => folder.name === 'Projects');
+      assert(rootFolder, 'Expected Projects folder to be persisted');
+
+      const childFolderResponse = await postFormManual(baseUrl, '/dashboard/folders', {
+        name: 'Drafts',
+        parentId: rootFolder.id,
+        returnTo: `/folders/${rootFolder.id}`,
+      });
+      assert(childFolderResponse.status === 303, `Expected child folder create redirect 303, got ${childFolderResponse.status}`);
+      const childFolder = db.listLocalDashboardFolderOptions().find((folder) => folder.name === 'Drafts' && folder.parent_id === rootFolder.id);
+      assert(childFolder, 'Expected Drafts child folder to be persisted');
+
+      const invalidMove = await postFormManual(baseUrl, `/dashboard/folders/${rootFolder.id}/move`, {
+        folderId: childFolder.id,
+        returnTo: `/folders/${rootFolder.id}`,
+      });
+      assert(invalidMove.status === 303, `Expected invalid folder move redirect 303, got ${invalidMove.status}`);
+      assert((invalidMove.headers.get('location') || '').includes('error='), 'Expected invalid move to redirect with an error');
+
+      const moveDocResponse = await postFormManual(baseUrl, `/dashboard/documents/${folderDocSlug}/move`, {
+        folderId: childFolder.id,
+        returnTo: '/',
+      });
+      assert(moveDocResponse.status === 303, `Expected document move redirect 303, got ${moveDocResponse.status}`);
+
+      const rootPage = await get(baseUrl, '/', { Accept: 'text/html' });
+      assert(rootPage.status === 200, `Expected dashboard status 200, got ${rootPage.status}`);
+      assertIncludes(rootPage.body, 'Projects', 'Expected root dashboard to include parent folder');
+      assert(!rootPage.body.includes('Folder Doc'), 'Expected moved document to leave root folder listing');
+
+      const childPage = await get(baseUrl, `/folders/${childFolder.id}`, { Accept: 'text/html' });
+      assert(childPage.status === 200, `Expected child folder status 200, got ${childPage.status}`);
+      assertIncludes(childPage.body, 'Projects', 'Expected breadcrumbs to include parent folder');
+      assertIncludes(childPage.body, 'Drafts', 'Expected child folder page heading/breadcrumb');
+      assertIncludes(childPage.body, 'Folder Doc', 'Expected moved document inside child folder');
+    });
+
+    await test('D2: dashboard trash hides, lists, and restores local documents', async () => {
+      const createdForTrashResponse = await postNoClientHeaders(baseUrl, '/documents', {
+        markdown: '# Trash Doc\n\nRestore me',
+        marks: {},
+        title: 'Trash Doc',
+      });
+      assert(createdForTrashResponse.status === 200, `Expected create status 200, got ${createdForTrashResponse.status}`);
+      const createdForTrash = await createdForTrashResponse.json();
+      const trashSlug = String(createdForTrash.slug);
+
+      const archiveFolderResponse = await postFormManual(baseUrl, '/dashboard/folders', {
+        name: 'Archive',
+        parentId: '',
+        returnTo: '/',
+      });
+      assert(archiveFolderResponse.status === 303, `Expected folder create redirect 303, got ${archiveFolderResponse.status}`);
+      const archiveFolder = db.listLocalDashboardFolderOptions().find((folder) => folder.name === 'Archive');
+      assert(archiveFolder, 'Expected Archive folder to be persisted');
+      await postFormManual(baseUrl, `/dashboard/documents/${trashSlug}/move`, {
+        folderId: archiveFolder.id,
+        returnTo: '/',
+      });
+
+      const trashResponse = await postFormManual(baseUrl, `/dashboard/documents/${trashSlug}/trash`, {
+        returnTo: `/folders/${archiveFolder.id}`,
+      });
+      assert(trashResponse.status === 303, `Expected trash redirect 303, got ${trashResponse.status}`);
+
+      const folderPage = await get(baseUrl, `/folders/${archiveFolder.id}`, { Accept: 'text/html' });
+      assert(!folderPage.body.includes('Trash Doc'), 'Expected deleted document to be hidden from folder page');
+
+      const trashPage = await get(baseUrl, '/trash', { Accept: 'text/html' });
+      assert(trashPage.status === 200, `Expected trash status 200, got ${trashPage.status}`);
+      assertIncludes(trashPage.body, 'Trash Doc', 'Expected deleted document in Trash');
+      assertIncludes(trashPage.body, 'Restore', 'Expected restore action in Trash');
+
+      const restoreResponse = await postFormManual(baseUrl, `/dashboard/documents/${trashSlug}/restore`, {
+        returnTo: '/trash',
+      });
+      assert(restoreResponse.status === 303, `Expected restore redirect 303, got ${restoreResponse.status}`);
+      const restoredFolderPage = await get(baseUrl, `/folders/${archiveFolder.id}`, { Accept: 'text/html' });
+      assertIncludes(restoredFolderPage.body, 'Trash Doc', 'Expected restored document to return to its folder');
+    });
+
+    await test('D2: dashboard shows persisted human and agent participants', async () => {
+      const createdForParticipantsResponse = await postNoClientHeaders(baseUrl, '/documents', {
+        markdown: '# Participant Doc\n\nPeople here',
+        marks: {},
+        title: 'Participant Doc',
+      });
+      assert(createdForParticipantsResponse.status === 200, `Expected create status 200, got ${createdForParticipantsResponse.status}`);
+      const createdForParticipants = await createdForParticipantsResponse.json();
+      const participantSlug = String(createdForParticipants.slug);
+      const participantToken = String(createdForParticipants.accessToken);
+
+      const humanResponse = await post(baseUrl, `/documents/${participantSlug}/participants`, {
+        kind: 'human',
+        id: 'alice-local',
+        name: 'Alice',
+        status: 'viewing',
+      }, { 'x-share-token': participantToken });
+      assert(humanResponse.status === 200, `Expected human participant status 200, got ${humanResponse.status}`);
+
+      const agentResponse = await post(baseUrl, `/api/agent/${participantSlug}/presence`, {
+        agentId: 'agent:review-bot',
+        name: 'Review Bot',
+        status: 'active',
+      }, { 'x-share-token': participantToken });
+      assert(agentResponse.status === 200, `Expected agent presence status 200, got ${agentResponse.status}`);
+
+      const dashboard = await get(baseUrl, '/', { Accept: 'text/html' });
+      assertIncludes(dashboard.body, 'Participant Doc', 'Expected participant document on dashboard');
+      assertIncludes(dashboard.body, 'Alice', 'Expected human participant name on dashboard');
+      assertIncludes(dashboard.body, 'Review Bot', 'Expected agent participant name on dashboard');
+
+      const listResponse = await get(baseUrl, '/documents', { Accept: 'application/json' });
+      const payload = await listResponse.json();
+      const listed = payload.documents.find((doc: Record<string, unknown>) => doc.title === 'Participant Doc');
+      assert(Array.isArray(listed?.participants), 'Expected participants in dashboard document listing');
+      assert(JSON.stringify(listed.participants).includes('Alice'), 'Expected human participant in JSON listing');
+      assert(JSON.stringify(listed.participants).includes('Review Bot'), 'Expected agent participant in JSON listing');
     });
 
     await test('D2: POST /api/documents in warn mode returns deprecation headers + metadata', async () => {

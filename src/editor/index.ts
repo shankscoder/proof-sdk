@@ -1375,6 +1375,7 @@ class ProofEditorImpl implements ProofEditor {
         { name: this.shareViewerName || 'Anonymous' },
         shareClient.getSlug() ?? undefined
       );
+      void shareClient.updateParticipant({ name: this.shareViewerName || 'Anonymous', status: 'viewing' });
       if (wantsNamePrompt && canActInDocument && !existingViewerName) {
         void promptForName()
           .then((name) => {
@@ -1388,6 +1389,7 @@ class ProofEditorImpl implements ProofEditor {
               { name: resolvedName },
               shareClient.getSlug() ?? undefined
             );
+            void shareClient.updateParticipant({ name: resolvedName, status: 'viewing' });
           })
           .catch((error) => {
             console.warn('[share] name prompt failed', error);
@@ -3408,9 +3410,7 @@ class ProofEditorImpl implements ProofEditor {
 
     const wordmark = document.createElement('a');
     wordmark.textContent = 'Proof';
-    wordmark.href = 'https://www.proofeditor.ai';
-    wordmark.target = '_blank';
-    wordmark.rel = 'noopener';
+    wordmark.href = '/';
     wordmark.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;padding:0 8px;border-radius:10px;font-weight:600;color:#333;font-size:13px;letter-spacing:-0.2px;flex-shrink:0;text-decoration:none;';
 
     const separator = document.createElement('span');
