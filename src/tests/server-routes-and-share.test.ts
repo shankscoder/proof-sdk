@@ -634,6 +634,13 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       const response = await get(baseUrl, '/', { Accept: 'text/html' });
       assert(response.status === 200, `Expected status 200, got ${response.status}`);
       assertIncludes(response.body, '<h1>Documents</h1>', 'Expected dashboard heading');
+      assertIncludes(response.body, 'class="dashboard-layout"', 'Expected full-width dashboard layout wrapper');
+      assertIncludes(response.body, 'class="sidebar"', 'Expected dashboard sidebar');
+      assertIncludes(response.body, 'aria-label="Folder navigation"', 'Expected folder navigation landmark');
+      assertIncludes(response.body, '<a class="sidebar-brand" href="/">Proof</a>', 'Expected Proof sidebar brand');
+      assertIncludes(response.body, '<a class="nav-link active" href="/" aria-current="page">Home</a>', 'Expected active Home nav link');
+      assertIncludes(response.body, '<div class="nav-section-label">Folders</div>', 'Expected Folders sidebar section');
+      assertIncludes(response.body, '<div class="nav-section-label">Trash</div>', 'Expected Trash sidebar section');
       assertIncludes(response.body, 'Neutral create', 'Expected dashboard to include local document title');
       assertIncludes(response.body, 'href="/new"', 'Expected dashboard New action');
       assertIncludes(response.body, 'href="/d/', 'Expected dashboard document link');
@@ -696,12 +703,16 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       const rootPage = await get(baseUrl, '/', { Accept: 'text/html' });
       assert(rootPage.status === 200, `Expected dashboard status 200, got ${rootPage.status}`);
       assertIncludes(rootPage.body, 'Projects', 'Expected root dashboard to include parent folder');
+      assertIncludes(rootPage.body, `<a class="nav-link active" href="/" aria-current="page">Home</a>`, 'Expected Home active in sidebar at root');
+      assertIncludes(rootPage.body, `href="/folders/${rootFolder.id}" style="--depth: 0;"`, 'Expected parent folder in sidebar tree');
+      assertIncludes(rootPage.body, `href="/folders/${childFolder.id}" style="--depth: 1;"`, 'Expected nested folder in sidebar tree');
       assert(!rootPage.body.includes('Folder Doc'), 'Expected moved document to leave root folder listing');
 
       const childPage = await get(baseUrl, `/folders/${childFolder.id}`, { Accept: 'text/html' });
       assert(childPage.status === 200, `Expected child folder status 200, got ${childPage.status}`);
       assertIncludes(childPage.body, 'Projects', 'Expected breadcrumbs to include parent folder');
       assertIncludes(childPage.body, 'Drafts', 'Expected child folder page heading/breadcrumb');
+      assertIncludes(childPage.body, `class="tree-link active" href="/folders/${childFolder.id}" style="--depth: 1;" aria-current="page"`, 'Expected active nested folder in sidebar tree');
       assertIncludes(childPage.body, 'Folder Doc', 'Expected moved document inside child folder');
     });
 
@@ -738,6 +749,7 @@ async function runRoutePayloadValidationTests(): Promise<void> {
 
       const trashPage = await get(baseUrl, '/trash', { Accept: 'text/html' });
       assert(trashPage.status === 200, `Expected trash status 200, got ${trashPage.status}`);
+      assertIncludes(trashPage.body, '<a class="nav-link active" href="/trash" aria-current="page">Trash', 'Expected Trash active in sidebar');
       assertIncludes(trashPage.body, 'Trash Doc', 'Expected deleted document in Trash');
       assertIncludes(trashPage.body, 'Restore', 'Expected restore action in Trash');
 

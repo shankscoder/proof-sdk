@@ -188,6 +188,50 @@ function renderBreadcrumbs(breadcrumbs: LocalDashboardFolderRow[], isTrash: bool
   return `<nav class="breadcrumbs">${links.join('')}</nav>`;
 }
 
+function renderFolderTree(folders: LocalDashboardFolderRow[], currentFolderId: string | null): string {
+  const childrenByParent = new Map<string, LocalDashboardFolderRow[]>();
+  for (const folder of folders) {
+    const key = folder.parent_id ?? '';
+    const children = childrenByParent.get(key) ?? [];
+    children.push(folder);
+    childrenByParent.set(key, children);
+  }
+
+  const renderBranch = (parentId: string | null, depth: number): string => {
+    const children = childrenByParent.get(parentId ?? '') ?? [];
+    if (children.length === 0) return '';
+    const rows = children.map((folder) => {
+      const active = currentFolderId === folder.id;
+      const currentAttr = active ? ' aria-current="page"' : '';
+      return `<li>
+        <a class="tree-link${active ? ' active' : ''}" href="${folderHref(folder.id)}" style="--depth: ${depth};"${currentAttr}>
+          <span class="tree-icon" aria-hidden="true"></span>
+          <span class="tree-name">${escapeHtml(folder.name)}</span>
+        </a>
+        ${renderBranch(folder.id, depth + 1)}
+      </li>`;
+    }).join('');
+    return `<ul class="tree-list${depth > 0 ? ' nested' : ''}">${rows}</ul>`;
+  };
+
+  return renderBranch(null, 0) || '<p class="sidebar-empty">No folders yet</p>';
+}
+
+function renderSidebar(view: DashboardView, currentFolderId: string | null): string {
+  const homeActive = !view.isTrash && !currentFolderId;
+  const trashActive = view.isTrash === true;
+  return `<aside class="sidebar">
+    <a class="sidebar-brand" href="/">Proof</a>
+    <nav class="sidebar-nav" aria-label="Folder navigation">
+      <a class="nav-link${homeActive ? ' active' : ''}" href="/"${homeActive ? ' aria-current="page"' : ''}>Home</a>
+      <div class="nav-section-label">Folders</div>
+      ${renderFolderTree(view.folderOptions, currentFolderId)}
+      <div class="nav-section-label">Trash</div>
+      <a class="nav-link${trashActive ? ' active' : ''}" href="/trash"${trashActive ? ' aria-current="page"' : ''}>Trash${view.trashCount > 0 ? ` (${view.trashCount})` : ''}</a>
+    </nav>
+  </aside>`;
+}
+
 function renderFolderRow(folder: LocalDashboardFolderRow, folderOptions: LocalDashboardFolderRow[], returnTo: string): string {
   return `<article class="folder-row">
     <a class="folder-link" href="${folderHref(folder.id)}">
@@ -299,10 +343,99 @@ export function renderDashboardHtml(view: DashboardView): string {
       select {
         font: inherit;
       }
-      .shell {
-        width: min(1120px, calc(100% - 40px));
-        margin: 0 auto;
-        padding: 32px 0 56px;
+      .dashboard-layout {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+      .sidebar {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        height: 100vh;
+        overflow: auto;
+        border-right: 1px solid var(--line);
+        background: var(--surface);
+        padding: 28px 18px;
+      }
+      .sidebar-brand {
+        display: inline-flex;
+        margin-bottom: 28px;
+        color: var(--text);
+        font-size: 24px;
+        font-weight: 750;
+        line-height: 1;
+        text-decoration: none;
+      }
+      .sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .nav-section-label {
+        margin: 18px 0 6px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 750;
+      }
+      .nav-link,
+      .tree-link {
+        display: flex;
+        align-items: center;
+        min-height: 34px;
+        border-radius: 8px;
+        color: var(--text);
+        text-decoration: none;
+      }
+      .nav-link {
+        padding: 0 10px;
+      }
+      .nav-link:hover,
+      .tree-link:hover {
+        background: #f3f5f0;
+      }
+      .nav-link.active,
+      .tree-link.active {
+        background: #ecefeb;
+        font-weight: 750;
+      }
+      .tree-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .tree-list.nested {
+        margin: 0;
+      }
+      .tree-link {
+        gap: 8px;
+        padding: 0 10px 0 calc(10px + (var(--depth) * 16px));
+      }
+      .tree-icon {
+        display: inline-block;
+        width: 14px;
+        height: 11px;
+        flex: 0 0 auto;
+        border: 2px solid currentColor;
+        border-top-width: 4px;
+        border-radius: 2px;
+        color: var(--muted);
+      }
+      .tree-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .sidebar-empty {
+        margin: 0;
+        padding: 0 10px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .content {
+        min-width: 0;
+        padding: 32px 24px 56px 36px;
       }
       .topbar,
       .toolbar {
@@ -547,6 +680,22 @@ export function renderDashboardHtml(view: DashboardView): string {
         color: var(--muted);
       }
       @media (max-width: 880px) {
+        .dashboard-layout {
+          display: block;
+        }
+        .sidebar {
+          position: static;
+          height: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          padding: 20px 18px;
+        }
+        .sidebar-brand {
+          margin-bottom: 16px;
+        }
+        .content {
+          padding: 24px 18px 44px;
+        }
         .toolbar,
         .topbar {
           align-items: flex-start;
@@ -563,9 +712,8 @@ export function renderDashboardHtml(view: DashboardView): string {
         }
       }
       @media (max-width: 640px) {
-        .shell {
-          width: min(100% - 24px, 1120px);
-          padding-top: 18px;
+        .content {
+          padding: 18px 12px 36px;
         }
         h1 {
           font-size: 24px;
@@ -587,32 +735,34 @@ export function renderDashboardHtml(view: DashboardView): string {
     </style>
   </head>
   <body>
-    <main class="shell">
-      ${renderBreadcrumbs(view.breadcrumbs, view.isTrash)}
-      <header class="topbar">
-        <div class="brand">
-          <h1>${escapeHtml(title)}</h1>
-          <p class="subtitle">${escapeHtml(subtitle)}</p>
-        </div>
-        <div class="actions">
-          <a class="secondary-link" href="/trash">Trash${view.trashCount > 0 ? ` (${view.trashCount})` : ''}</a>
-          <a class="new-button" href="/new">New +</a>
-        </div>
-      </header>
-      ${view.isTrash ? '' : `<section class="toolbar" aria-label="Folder actions">
-        <form class="new-folder" method="post" action="/dashboard/folders">
-          <input type="hidden" name="parentId" value="${escapeHtml(currentFolderId ?? '')}" />
-          <input type="hidden" name="returnTo" value="${escapeHtml(currentPath)}" />
-          <input name="name" placeholder="Folder name" aria-label="Folder name" />
-          <button type="submit">New folder</button>
-        </form>
-      </section>`}
-      ${notice}
-      ${error}
-      <section class="list" aria-label="${view.isTrash ? 'Deleted documents' : 'Folder contents'}">
-        ${renderDashboardContent(view, currentPath)}
-      </section>
-    </main>
+    <div class="dashboard-layout">
+      ${renderSidebar(view, currentFolderId)}
+      <main class="content">
+        ${renderBreadcrumbs(view.breadcrumbs, view.isTrash)}
+        <header class="topbar">
+          <div class="brand">
+            <h1>${escapeHtml(title)}</h1>
+            <p class="subtitle">${escapeHtml(subtitle)}</p>
+          </div>
+          <div class="actions">
+            <a class="new-button" href="/new">New +</a>
+          </div>
+        </header>
+        ${view.isTrash ? '' : `<section class="toolbar" aria-label="Folder actions">
+          <form class="new-folder" method="post" action="/dashboard/folders">
+            <input type="hidden" name="parentId" value="${escapeHtml(currentFolderId ?? '')}" />
+            <input type="hidden" name="returnTo" value="${escapeHtml(currentPath)}" />
+            <input name="name" placeholder="Folder name" aria-label="Folder name" />
+            <button type="submit">New folder</button>
+          </form>
+        </section>`}
+        ${notice}
+        ${error}
+        <section class="list" aria-label="${view.isTrash ? 'Deleted documents' : 'Folder contents'}">
+          ${renderDashboardContent(view, currentPath)}
+        </section>
+      </main>
+    </div>
   </body>
 </html>`;
 }
