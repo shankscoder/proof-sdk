@@ -171,7 +171,7 @@ function renderFolderSelect(
     .join('');
   const rootSelected = selectedFolderId ? '' : ' selected';
   return `<select name="folderId">
-    <option value=""${rootSelected}>Dashboard root</option>
+    <option value=""${rootSelected}>Home</option>
     ${options}
   </select>`;
 }
