@@ -3921,39 +3921,19 @@ agentRoutes.post('/:slug/clone-from-canonical', async (req: Request, res: Respon
   sendMutationResponse(res, responseStatus, responseBody, { route: mutationRoute, slug });
 });
 
-agentRoutes.get('/:slug/events/pending', (req: Request, res: Response) => {
-  const slug = getSlug(req);
-  if (!slug) {
-    recordCollabRouteLatency('events_pending', 'invalid_slug', 0);
-    res.status(400).json({ success: false, error: 'Invalid slug' });
-    return;
-  }
-  if (!checkAuth(req, res, slug, ['viewer', 'commenter', 'editor', 'owner_bot'])) return;
+function parseEventsAfter(req: Request): number {
   const after = Number.parseInt(String(req.query.after ?? '0'), 10);
+  return Number.isFinite(after) ? Math.max(0, after) : 0;
+}
+
+function parseEventsLimit(req: Request): number {
   const limit = Number.parseInt(String(req.query.limit ?? '100'), 10);
-  const events = listDocumentEvents(slug, Number.isFinite(after) ? Math.max(0, after) : 0, Number.isFinite(limit) ? limit : 100);
-  const startedAtMs = getRequestStartedAtMs(res) ?? Date.now();
-  const durationMs = Math.max(0, Date.now() - startedAtMs);
-  recordCollabRouteLatency('events_pending', 'success', durationMs);
-  if (durationMs >= 500) {
-    traceServerIncident({
-      requestId: readRequestId(req),
-      slug,
-      subsystem: 'collab',
-      level: 'info',
-      eventType: 'collab.route.events_pending',
-      message: 'events/pending request completed',
-      data: {
-        route: 'events_pending',
-        result: 'success',
-        durationMs,
-        after: Number.isFinite(after) ? Math.max(0, after) : 0,
-        limit: Number.isFinite(limit) ? limit : 100,
-        eventCount: events.length,
-      },
-    });
-  }
-  res.json({
+  return Number.isFinite(limit) ? limit : 100;
+}
+
+function listSerializedDocumentEvents(slug: string, after: number, limit: number) {
+  const events = listDocumentEvents(slug, after, limit);
+  return {
     success: true,
     events: events.map((event) => ({
       id: event.id,
@@ -3971,7 +3951,89 @@ agentRoutes.get('/:slug/events/pending', (req: Request, res: Response) => {
       ackedBy: event.acked_by,
     })),
     cursor: events.length > 0 ? events[events.length - 1]?.id ?? after : after,
+  };
+}
+
+agentRoutes.get('/:slug/events/stream', (req: Request, res: Response) => {
+  const slug = getSlug(req);
+  if (!slug) {
+    res.status(400).json({ success: false, error: 'Invalid slug' });
+    return;
+  }
+  if (!checkAuth(req, res, slug, ['viewer', 'commenter', 'editor', 'owner_bot'])) return;
+  let cursor = parseEventsAfter(req);
+  const limit = parseEventsLimit(req);
+  let closed = false;
+
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const writeEvent = (eventName: string, data: unknown): void => {
+    if (closed || res.writableEnded) return;
+    res.write(`event: ${eventName}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const writePendingEvents = (): void => {
+    const payload = listSerializedDocumentEvents(slug, cursor, limit);
+    if (payload.events.length === 0) return;
+    cursor = payload.cursor;
+    writeEvent('proof.events', payload);
+  };
+
+  res.write(': connected\n\n');
+  writePendingEvents();
+
+  const interval = setInterval(() => {
+    if (closed || res.writableEnded) return;
+    writePendingEvents();
+    if (!closed && !res.writableEnded) {
+      res.write(`: keepalive ${Date.now()}\n\n`);
+    }
+  }, 5000);
+
+  req.on('close', () => {
+    closed = true;
+    clearInterval(interval);
   });
+});
+
+agentRoutes.get('/:slug/events/pending', (req: Request, res: Response) => {
+  const slug = getSlug(req);
+  if (!slug) {
+    recordCollabRouteLatency('events_pending', 'invalid_slug', 0);
+    res.status(400).json({ success: false, error: 'Invalid slug' });
+    return;
+  }
+  if (!checkAuth(req, res, slug, ['viewer', 'commenter', 'editor', 'owner_bot'])) return;
+  const after = parseEventsAfter(req);
+  const limit = parseEventsLimit(req);
+  const payload = listSerializedDocumentEvents(slug, after, limit);
+  const startedAtMs = getRequestStartedAtMs(res) ?? Date.now();
+  const durationMs = Math.max(0, Date.now() - startedAtMs);
+  recordCollabRouteLatency('events_pending', 'success', durationMs);
+  if (durationMs >= 500) {
+    traceServerIncident({
+      requestId: readRequestId(req),
+      slug,
+      subsystem: 'collab',
+      level: 'info',
+      eventType: 'collab.route.events_pending',
+      message: 'events/pending request completed',
+      data: {
+        route: 'events_pending',
+        result: 'success',
+        durationMs,
+        after: Number.isFinite(after) ? Math.max(0, after) : 0,
+        limit: Number.isFinite(limit) ? limit : 100,
+        eventCount: payload.events.length,
+      },
+    });
+  }
+  res.json(payload);
 });
 
 agentRoutes.post('/:slug/events/ack', (req: Request, res: Response) => {

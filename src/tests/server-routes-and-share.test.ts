@@ -84,6 +84,32 @@ async function getBinary(base: string, path: string, headers: Record<string, str
   };
 }
 
+async function getSseChunk(base: string, path: string, headers: Record<string, string> = {}): Promise<any> {
+  const controller = new AbortController();
+  const response = await fetch(`${base}${path}`, {
+    headers: { ...CLIENT_HEADERS, ...headers },
+    signal: controller.signal,
+  });
+  const reader = response.body?.getReader();
+  if (!reader) {
+    controller.abort();
+    throw new Error('SSE response did not expose a readable body');
+  }
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  try {
+    const chunk = await reader.read();
+    const body = new TextDecoder().decode(chunk.value ?? new Uint8Array());
+    return {
+      status: response.status,
+      headers: response.headers,
+      body,
+    };
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+  }
+}
+
 async function post(base: string, path: string, body?: object, headers: Record<string, string> = {}): Promise<any> {
   const response = await fetch(`${base}${path}`, {
     method: 'POST',
@@ -426,6 +452,43 @@ async function runServerSourceTests(): Promise<void> {
     );
   });
 
+  await test('D1: editor uses production-style agent onboarding copy', async () => {
+    assertIncludes(
+      editorSource,
+      'Proof is a collaborative document editor with presence, comments, suggestions, and edit APIs.',
+      'editor invite prompt should start with production copy',
+    );
+    assertIncludes(
+      editorSource,
+      'Bring your agent into this doc',
+      'editor should include the agent onboarding modal title',
+    );
+    assertIncludes(
+      editorSource,
+      'Copy for agent',
+      'editor should include the hosted-style copy button label',
+    );
+    assertIncludes(
+      editorSource,
+      '/events/stream',
+      'agent prompt should prefer the events stream route',
+    );
+    assertIncludes(
+      editorSource,
+      'https://github.com/shankscoder/proof-sdk',
+      'agent prompt should point at the local fork reference repo',
+    );
+    assertIncludes(
+      editorSource,
+      "window.open('/agent-help', '_blank', 'noopener')",
+      'editor Help/FAQ menu should open in a new tab',
+    );
+    assert(
+      !editorSource.includes('This document was shared with you. You can edit it, and your changes are saved automatically.'),
+      'fresh local documents should not use the shared-with-you toast copy',
+    );
+  });
+
   await test('D1: server source publishes a health endpoint', async () => {
     assertIncludes(
       serverSource,
@@ -642,9 +705,22 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       assertIncludes(response.body, '<div class="nav-section-label">Folders</div>', 'Expected Folders sidebar section');
       assertIncludes(response.body, 'class="tree-link active" href="/" style="--depth: 0;" aria-current="page"', 'Expected active Home tree link');
       assertIncludes(response.body, '<div class="nav-section-label">Trash</div>', 'Expected Trash sidebar section');
+      assertIncludes(response.body, 'href="/agent-help"', 'Expected dashboard Agent Help link');
       assertIncludes(response.body, 'Neutral create', 'Expected dashboard to include local document title');
       assertIncludes(response.body, 'href="/new"', 'Expected dashboard New action');
       assertIncludes(response.body, 'href="/d/', 'Expected dashboard document link');
+    });
+
+    await test('D2: /agent-help explains AI agent usage', async () => {
+      const response = await get(baseUrl, '/agent-help', { Accept: 'text/html' });
+      assert(response.status === 200, `Expected status 200, got ${response.status}`);
+      assertIncludes(response.body, 'Use Proof with an AI agent', 'Expected help page heading');
+      assertIncludes(response.body, 'Copy for agent', 'Expected help page to mention the onboarding copy action');
+      assertIncludes(response.body, 'X-Agent-Id', 'Expected help page to mention agent identity');
+      assertIncludes(response.body, '/api/agent/:slug/events/stream', 'Expected help page to document the stream endpoint');
+      assertIncludes(response.body, '/agent-docs', 'Expected help page docs link');
+      assertIncludes(response.body, '/agent-setup', 'Expected help page setup link');
+      assertIncludes(response.body, '/proof.SKILL.md', 'Expected help page skill link');
     });
 
     await test('D2: /new creates a document and redirects to a tokenized document URL', async () => {
@@ -658,6 +734,24 @@ async function runRoutePayloadValidationTests(): Promise<void> {
       const slugFromRedirect = decodeURIComponent(slugMatch?.[1] ?? '');
       const doc = db.getDocumentBySlug(slugFromRedirect);
       assert(doc?.title === 'Untitled', `Expected created Untitled doc, got ${String(doc?.title)}`);
+    });
+
+    await test('D2: /api/agent/:slug/events/stream opens an authenticated SSE stream', async () => {
+      const createdForStreamResponse = await postNoClientHeaders(baseUrl, '/documents', {
+        markdown: '# Stream Doc\n\nWatch me',
+        marks: {},
+        title: 'Stream Doc',
+      });
+      assert(createdForStreamResponse.status === 200, `Expected create status 200, got ${createdForStreamResponse.status}`);
+      const createdForStream = await createdForStreamResponse.json();
+      const streamSlug = String(createdForStream.slug);
+      const streamToken = String(createdForStream.accessToken);
+      const response = await getSseChunk(baseUrl, `/api/agent/${streamSlug}/events/stream?after=0`, {
+        Authorization: `Bearer ${streamToken}`,
+      });
+      assert(response.status === 200, `Expected stream status 200, got ${response.status}`);
+      assert((response.headers.get('content-type') || '').includes('text/event-stream'), 'Expected text/event-stream content type');
+      assertIncludes(response.body, ': connected', 'Expected initial SSE connection comment');
     });
 
     await test('D2: dashboard supports nested folders and moving documents', async () => {

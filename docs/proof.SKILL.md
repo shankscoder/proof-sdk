@@ -108,7 +108,14 @@ GET  /documents/<slug>/events
 POST /documents/<slug>/events/ack
 ```
 
-### Poll events
+### Stream or poll events
+
+```bash
+curl -N "http://localhost:4000/documents/<slug>/events/stream?after=0" \
+  -H "Authorization: Bearer <token>"
+```
+
+If streaming is unavailable, poll:
 
 ```bash
 curl -sS "http://localhost:4000/documents/<slug>/events/pending?after=0" \

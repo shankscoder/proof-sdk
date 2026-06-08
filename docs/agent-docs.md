@@ -11,6 +11,7 @@ The reusable `Proof SDK` surface is mounted in parallel at:
 - `GET /documents/:slug/snapshot`
 - `POST /documents/:slug/ops`
 - `POST /documents/:slug/presence`
+- `GET /documents/:slug/events/stream`
 - `GET /documents/:slug/events/pending`
 - `POST /documents/:slug/events/ack`
 - `GET /documents/:slug/bridge/state`
@@ -298,9 +299,13 @@ Common mutation contract error codes:
 - `REWRITE_BARRIER_FAILED`: rewrite safety barrier failed before mutation; no rewrite was applied.
   This response is retryable and includes `reason` + `nextSteps`; retry with bounded exponential backoff and jitter.
 
-## Presence And Event Polling
+## Presence And Events
 
-Poll for changes:
+Prefer streaming new Proof activity:
+
+  GET /documents/<slug>/events/stream?after=<cursor>
+
+Poll for changes if a stream cannot stay open:
 
   GET /documents/<slug>/events/pending?after=<cursor>&limit=100
 

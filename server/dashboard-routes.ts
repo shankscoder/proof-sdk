@@ -235,6 +235,8 @@ function renderSidebar(view: DashboardView, currentFolderId: string | null): str
       ${renderFolderTree(view.folderOptions, currentFolderId, view.isTrash === true)}
       <div class="nav-section-label">Trash</div>
       <a class="nav-link${trashActive ? ' active' : ''}" href="/trash"${trashActive ? ' aria-current="page"' : ''}>Trash${view.trashCount > 0 ? ` (${view.trashCount})` : ''}</a>
+      <div class="nav-section-label">Help</div>
+      <a class="nav-link" href="/agent-help">Agent Help</a>
     </nav>
   </aside>`;
 }
@@ -911,6 +913,237 @@ export function renderDashboardHtml(view: DashboardView): string {
 </html>`;
 }
 
+function renderAgentHelpHtml(req: Request): string {
+  const base = getPublicBaseUrl(req) || 'http://localhost:4000';
+  const skillUrl = `${base}/proof.SKILL.md`;
+  const docsUrl = `${base}/agent-docs`;
+  const setupUrl = `${base}/agent-setup`;
+  const reportBugUrl = `${base}/api/bridge/report_bug`;
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proof Agent Help</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f8f5;
+        --surface: #ffffff;
+        --text: #161a17;
+        --muted: #667068;
+        --line: #e1e5dd;
+        --accent: #111111;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      a { color: inherit; }
+      .help-layout {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+      .help-sidebar {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        height: 100vh;
+        border-right: 1px solid var(--line);
+        background: var(--surface);
+        padding: 28px 18px;
+      }
+      .sidebar-brand {
+        display: inline-flex;
+        margin-bottom: 28px;
+        color: var(--text);
+        font-size: 24px;
+        font-weight: 750;
+        line-height: 1;
+        text-decoration: none;
+      }
+      .nav-link {
+        display: flex;
+        align-items: center;
+        min-height: 34px;
+        padding: 0 10px;
+        border-radius: 8px;
+        color: var(--text);
+        text-decoration: none;
+      }
+      .nav-link:hover,
+      .nav-link.active {
+        background: #ecefeb;
+        font-weight: 750;
+      }
+      .content {
+        width: min(920px, 100%);
+        padding: 42px 36px 64px;
+      }
+      .eyebrow {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 750;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 36px;
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+      .lead {
+        max-width: 720px;
+        margin: 0 0 28px;
+        color: var(--muted);
+        font-size: 18px;
+      }
+      section {
+        border-top: 1px solid var(--line);
+        padding: 24px 0;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font-size: 21px;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+      p,
+      ol,
+      ul {
+        max-width: 760px;
+      }
+      p {
+        margin: 0 0 12px;
+        color: var(--muted);
+      }
+      ol,
+      ul {
+        margin: 0;
+        padding-left: 22px;
+        color: var(--muted);
+      }
+      li + li {
+        margin-top: 8px;
+      }
+      code {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fff;
+        padding: 1px 5px;
+        color: var(--text);
+        font-size: 0.92em;
+      }
+      .link-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      .button-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        padding: 0 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+        text-decoration: none;
+        font-weight: 650;
+      }
+      .button-link.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      @media (max-width: 820px) {
+        .help-layout {
+          display: block;
+        }
+        .help-sidebar {
+          position: static;
+          height: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          padding: 20px 18px;
+        }
+        .sidebar-brand {
+          margin-bottom: 16px;
+        }
+        .content {
+          padding: 28px 18px 46px;
+        }
+        h1 {
+          font-size: 30px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="help-layout">
+      <aside class="help-sidebar">
+        <a class="sidebar-brand" href="/">Proof</a>
+        <nav aria-label="Help navigation">
+          <a class="nav-link" href="/">Home</a>
+          <a class="nav-link active" href="/agent-help" aria-current="page">Agent Help</a>
+        </nav>
+      </aside>
+      <main class="content">
+        <p class="eyebrow">Help / FAQ</p>
+        <h1>Use Proof with an AI agent</h1>
+        <p class="lead">Proof lets a coding agent join a specific document, announce presence, read the latest state, monitor activity, and suggest or apply edits through the document APIs.</p>
+
+        <section>
+          <h2>Fast path</h2>
+          <ol>
+            <li>Open a document and choose <strong>Copy for agent</strong> from the onboarding popup or agent controls.</li>
+            <li>Paste that prompt into Codex, Claude Code, Claw, or another coding agent.</li>
+            <li>Wait for the agent to reply <strong>Connected in Proof and ready.</strong></li>
+          </ol>
+        </section>
+
+        <section>
+          <h2>How access works</h2>
+          <p>The copied document URL includes a <code>token</code>. Agents should send it as <code>Authorization: Bearer &lt;token&gt;</code>. Presence requires a stable <code>X-Agent-Id</code> header or an <code>agentId</code> in the JSON body.</p>
+          <p>Presence appears in the editor toolbar and on the dashboard participant list after refresh.</p>
+        </section>
+
+        <section>
+          <h2>Useful endpoints</h2>
+          <ul>
+            <li><code>POST /api/agent/:slug/presence</code> announces the agent in the document.</li>
+            <li><code>GET /api/agent/:slug/state</code> reads the current document state.</li>
+            <li><code>GET /api/agent/:slug/events/stream</code> streams new Proof activity.</li>
+            <li><code>GET /api/agent/:slug/events/pending?after=&lt;last-seen-id&gt;</code> polls if streaming is unavailable.</li>
+            <li><code>POST /api/bridge/report_bug</code> reports surprising failures with raw evidence.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>Setup docs</h2>
+          <p>Most agents only need the copied prompt. For deeper integrations, fetch the skill or docs from this local server.</p>
+          <div class="link-row">
+            <a class="button-link primary" href="/agent-docs">Agent docs</a>
+            <a class="button-link" href="/agent-setup">Agent setup</a>
+            <a class="button-link" href="/proof.SKILL.md">Proof skill</a>
+          </div>
+          <p style="margin-top:14px;">Current local URLs: <code>${escapeHtml(docsUrl)}</code>, <code>${escapeHtml(setupUrl)}</code>, <code>${escapeHtml(skillUrl)}</code>, <code>${escapeHtml(reportBugUrl)}</code>.</p>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>`;
+}
+
 function getDashboardView(folderId: string | null, query: Request['query'] = {}): DashboardView {
   const currentFolder = folderId ? (getLocalDashboardFolder(folderId) ?? null) : null;
   const currentFolderId = currentFolder?.id ?? null;
@@ -953,6 +1186,10 @@ function redirectBackWithError(req: Request, res: Response, message: string, fal
 
 dashboardRoutes.get('/', (req, res) => {
   renderFolderView(req, null, res);
+});
+
+dashboardRoutes.get('/agent-help', (req, res) => {
+  res.type('html').send(renderAgentHelpHtml(req));
 });
 
 dashboardRoutes.get('/folders/:folderId', (req, res) => {

@@ -1061,7 +1061,7 @@ class ProofEditorImpl implements ProofEditor {
   private shareMenuCleanup: (() => void) | null = null;
   private presenceMenuCleanup: (() => void) | null = null;
   private agentMenuCleanup: (() => void) | null = null;
-  private shareWelcomeToast: HTMLElement | null = null;
+  private agentOnboardingModal: HTMLElement | null = null;
   private shareDocTitle: string = 'Untitled';
   private shareBannerTitleEl: HTMLElement | null = null;
   private shareBannerAvatarsEl: HTMLElement | null = null;
@@ -1439,7 +1439,7 @@ class ProofEditorImpl implements ProofEditor {
       const shareCapabilities = context?.capabilities
         ?? (collabSession && 'capabilities' in collabSession ? collabSession.capabilities : null);
       this.collabCanComment = Boolean(shareCapabilities?.canComment);
-      this.showShareWelcomeToastOnce(shareCapabilities);
+      this.showAgentOnboardingModalOnce();
 
       if (collabSession && 'session' in collabSession && collabSession.session) {
         if (this.collabRefreshTimer) {
@@ -3930,30 +3930,45 @@ class ProofEditorImpl implements ProofEditor {
     const encodedSlug = encodeURIComponent(slug);
     const presenceUrl = `${origin}/api/agent/${encodedSlug}/presence`;
     const stateUrl = `${origin}/api/agent/${encodedSlug}/state`;
-    const opsUrl = `${origin}/api/agent/${encodedSlug}/ops`;
-    const editUrl = `${origin}/api/agent/${encodedSlug}/edit`;
+    const eventsStreamUrl = `${origin}/api/agent/${encodedSlug}/events/stream`;
+    const eventsPendingUrl = `${origin}/api/agent/${encodedSlug}/events/pending?after=<last-seen-id>`;
+    const skillUrl = `${origin}/proof.SKILL.md`;
+    const docsUrl = `${origin}/agent-docs`;
+    const reportBugUrl = `${origin}/api/bridge/report_bug`;
+    const referenceCodeUrl = 'https://github.com/shankscoder/proof-sdk';
 
     return [
-      'Collaborate with me on this Proof doc.',
+      'Proof is a collaborative document editor with presence, comments, suggestions, and edit APIs.',
       '',
-      `Doc: ${shareUrl}`,
+      'Join this doc immediately so I can see your presence:',
+      shareUrl,
       '',
-      'Auth for each API request:',
-      `- x-share-token: ${token || '<token-from-doc-url>'}`,
-      '- X-Agent-Id: <your-agent-id>',
-      '- (Use the token from the Doc URL query param: ?token=...)',
+      '1. Announce your presence in this doc first.',
+      '   If you already know Proof, do that immediately.',
+      `   If not, use the tokenized URL above or POST ${presenceUrl} with the bearer token from the URL.`,
       '',
-      'Start here:',
-      '1) Read current document state with your identity header:',
-      `   GET ${stateUrl}`,
-      '   header: X-Agent-Id: <your-agent-id>',
-      '2) Optionally set your friendly name in presence:',
+      '2. Once you have joined, read the current doc and reply: Connected in Proof and ready.',
+      `   Read via GET ${stateUrl} with the bearer token from the URL, or open: ${shareUrl}`,
+      '',
+      '3. While working in this doc, monitor for new Proof activity.',
+      `   Prefer GET ${eventsStreamUrl} with the bearer token from the URL.`,
+      `   If you cannot keep a stream open, poll ${eventsPendingUrl} instead.`,
+      '   When an event arrives, refresh /state before replying or editing.',
+      '',
+      '4. If you need setup details for deeper interaction, fetch:',
+      `   Skill: ${skillUrl}`,
+      `   Docs: ${docsUrl}`,
+      '',
+      '5. If Proof looks wrong or the API fails in a surprising way, call:',
+      `   POST ${reportBugUrl}`,
+      '   Include a short summary, free-form context, and raw evidence like request/response pairs or request IDs.',
+      `   Optional reference code: ${referenceCodeUrl}`,
+      '',
+      'Presence API detail:',
       `   POST ${presenceUrl}`,
+      `   Authorization: Bearer ${token || '<token-from-doc-url>'}`,
+      '   X-Agent-Id: <your-agent-id>',
       '   body: {"agentId":"<your-agent-id>","name":"<your-name>","status":"active"}',
-      '3) If edits/comments are useful based on state, apply them with:',
-      `   POST ${opsUrl}`,
-      `   or POST ${editUrl}`,
-      '4) Then reply briefly with what you changed or suggest next steps.',
     ].join('\n');
   }
 
@@ -3969,75 +3984,145 @@ class ProofEditorImpl implements ProofEditor {
     return prompted;
   }
 
-  private showShareWelcomeToastOnce(capabilities?: { canComment: boolean; canEdit: boolean } | null): void {
-    const slug = shareClient.getSlug();
+  private showAgentOnboardingModalOnce(): void {
+    const shareUrl = this.getCanonicalShareUrl();
+    const slug = shareClient.getSlug() || this.extractShareSlugFromUrl(shareUrl);
     if (!slug) return;
 
     try {
-      const key = `proof_share_welcome_${slug}`;
+      const key = `proof_agent_onboarding_${slug}`;
       if (sessionStorage.getItem(key) === '1') return;
       sessionStorage.setItem(key, '1');
     } catch {
       // sessionStorage best-effort
     }
 
-    if (this.shareWelcomeToast) {
-      this.shareWelcomeToast.remove();
-      this.shareWelcomeToast = null;
-    }
-
-    const message = capabilities?.canEdit
-      ? 'This document was shared with you. You can edit it, and your changes are saved automatically.'
-      : capabilities?.canComment
-        ? 'This document was shared with you. You can leave comments.'
-        : 'This document was shared with you for viewing.';
-
-    const toast = document.createElement('div');
-    toast.className = 'proof-external-change-toast proof-share-welcome-toast';
-    toast.innerHTML = `
-      <div class="proof-toast-content">
-        <span class="proof-toast-message">${message}</span>
-      </div>
-    `;
-
-    document.body.appendChild(toast);
-    this.shareWelcomeToast = toast;
-    this.positionShareWelcomeToast(toast);
-    requestAnimationFrame(() => {
-      if (this.shareWelcomeToast !== toast) return;
-      this.positionShareWelcomeToast(toast);
-    });
-
-    setTimeout(() => {
-      if (this.shareWelcomeToast !== toast) return;
-      toast.remove();
-      this.shareWelcomeToast = null;
-    }, 5000);
+    this.openAgentOnboardingModal();
   }
 
-  private positionShareWelcomeToast(toast: HTMLElement): void {
-    const banner = document.getElementById('share-banner');
-    const isMobile = window.innerWidth <= 480;
-    const pageMargin = isMobile ? 12 : 12;
-    let top = 12;
-    if (banner) {
-      const rect = banner.getBoundingClientRect();
-      top = Math.max(12, Math.round(rect.bottom + 10));
+  private openAgentOnboardingModal(): void {
+    if (this.agentOnboardingModal) {
+      this.agentOnboardingModal.remove();
+      this.agentOnboardingModal = null;
     }
 
-    if (isMobile) {
-      toast.style.top = 'auto';
-      toast.style.bottom = `${pageMargin}px`;
-      toast.style.left = `${pageMargin}px`;
-      toast.style.right = `${pageMargin}px`;
-      toast.style.maxWidth = 'none';
-    } else {
-      toast.style.top = `${top}px`;
-      toast.style.bottom = '';
-      toast.style.left = '';
-      toast.style.right = `${pageMargin}px`;
-      toast.style.maxWidth = '340px';
-    }
+    const promptText = this.getAgentInviteMessage();
+    const overlay = document.createElement('div');
+    overlay.className = 'proof-agent-onboarding-modal';
+    overlay.style.cssText = `
+      position:fixed;inset:0;z-index:1200;
+      display:flex;align-items:center;justify-content:center;
+      padding:24px 16px;background:rgba(17,24,39,0.48);
+      backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+    `;
+
+    const panel = document.createElement('div');
+    panel.style.cssText = `
+      width:min(520px, 100%);max-height:min(720px, 92vh);overflow:auto;
+      background:#fff;border:1px solid rgba(15,23,42,0.10);border-radius:18px;
+      box-shadow:0 28px 80px rgba(15,23,42,0.28);
+      color:#111827;padding:30px;
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px;';
+
+    const headerText = document.createElement('div');
+    headerText.style.cssText = 'min-width:0;';
+
+    const badge = document.createElement('div');
+    badge.textContent = 'Works with your coding agent';
+    badge.style.cssText = `
+      display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:999px;
+      background:#eef4ff;color:#2563eb;font-size:12px;font-weight:750;letter-spacing:0.02em;
+      margin-bottom:14px;
+    `;
+
+    const title = document.createElement('h2');
+    title.textContent = 'Bring your agent into this doc';
+    title.style.cssText = 'margin:0;font-size:28px;line-height:1.08;letter-spacing:0;font-weight:800;color:#111827;';
+    headerText.append(badge, title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.setAttribute('aria-label', 'Close agent onboarding');
+    closeButton.textContent = 'x';
+    closeButton.style.cssText = `
+      width:38px;height:38px;border:0;border-radius:999px;background:#f1f5f9;color:#475569;
+      display:inline-flex;align-items:center;justify-content:center;font-size:24px;line-height:1;
+      cursor:pointer;flex:0 0 auto;
+    `;
+
+    header.append(headerText, closeButton);
+
+    const intro = document.createElement('p');
+    intro.textContent = 'Your Claw, Claude Code, Codex, or any other agent can write with you here. Copy one prompt that tells it to join first, read the doc next, and fetch setup only if needed.';
+    intro.style.cssText = 'margin:0 0 18px;color:#475569;font-size:15px;line-height:1.6;';
+
+    const pre = document.createElement('pre');
+    pre.textContent = promptText;
+    pre.style.cssText = `
+      margin:0 0 12px;padding:18px;max-height:160px;overflow:auto;border-radius:14px;
+      background:#111827;color:#e5e7eb;font:12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      white-space:pre-wrap;word-break:break-word;
+    `;
+
+    const explainer = document.createElement('p');
+    explainer.textContent = 'This prompt tells your agent to show up in Proof first, then read the doc, then use the Proof skill or docs only if it needs more help. If Proof itself looks wrong, it should call report_bug with what it saw.';
+    explainer.style.cssText = 'margin:0 0 18px;color:#64748b;font-size:13px;line-height:1.55;';
+
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.textContent = 'Copy for agent';
+    copyButton.style.cssText = `
+      width:100%;min-height:52px;border:2px solid #2563eb;border-radius:14px;background:#111827;
+      color:#fff;font-size:14px;font-weight:750;cursor:pointer;
+    `;
+
+    const skipButton = document.createElement('button');
+    skipButton.type = 'button';
+    skipButton.textContent = 'Skip';
+    skipButton.style.cssText = `
+      display:block;margin:10px auto 0;border:0;background:transparent;color:#64748b;
+      font-size:13px;text-decoration:underline;cursor:pointer;
+    `;
+
+    const footer = document.createElement('p');
+    footer.textContent = 'You can reopen help later from the Share menu if you want to bring an agent in after you start writing.';
+    footer.style.cssText = 'margin:20px 0 0;color:#94a3b8;font-size:12px;line-height:1.5;';
+
+    panel.append(header, intro, pre, explainer, copyButton, skipButton, footer);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    this.agentOnboardingModal = overlay;
+
+    const cleanup = () => {
+      if (!overlay.isConnected) return;
+      overlay.remove();
+      this.agentOnboardingModal = null;
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') cleanup();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    overlay.addEventListener('mousedown', (ev) => {
+      if (ev.target === overlay) cleanup();
+    });
+    closeButton.onclick = cleanup;
+    skipButton.onclick = cleanup;
+    copyButton.onclick = async () => {
+      const ok = await this.copyTextToClipboard(promptText);
+      if (!ok) {
+        this.copyWithPromptFallback(promptText, 'Copy agent prompt:');
+      }
+      this.triggerHaptic(ok ? 'success' : 'medium');
+      const original = copyButton.textContent;
+      copyButton.textContent = ok ? 'Copied' : 'Copy shown';
+      setTimeout(() => {
+        if (copyButton.isConnected) copyButton.textContent = original;
+      }, 1200);
+    };
   }
 
   private createShareMenuButton(): HTMLElement {
@@ -4166,6 +4251,9 @@ class ProofEditorImpl implements ProofEditor {
       addItem('Copy link', async () => this.copyLinkWithFallback(this.getCanonicalShareUrl()));
       addDivider();
       addActionItem('View activity', () => this.openShareActivityModal());
+      addActionItem('Agent Help / FAQ', () => {
+        window.open('/agent-help', '_blank', 'noopener');
+      }, { subtle: true });
 
       container.appendChild(menu);
       this.clampMenuToViewport(menu);
